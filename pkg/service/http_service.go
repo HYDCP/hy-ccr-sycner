@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -74,10 +75,12 @@ func newSuccessResult() *defaultResult {
 }
 
 type HttpService struct {
-	port     int
-	server   *http.Server
-	mux      *http.ServeMux
-	hostInfo string
+	host      string
+	port      int
+	server    *http.Server
+	mux       *http.ServeMux
+	hostInfo  string
+	startTime time.Time
 
 	db         storage.DB
 	jobManager *ccr.JobManager
@@ -85,9 +88,11 @@ type HttpService struct {
 
 func NewHttpServer(host string, port int, db storage.DB, jobManager *ccr.JobManager) *HttpService {
 	return &HttpService{
-		port:     port,
-		mux:      http.NewServeMux(),
-		hostInfo: fmt.Sprintf("%s:%d", host, port),
+		host:      host,
+		port:      port,
+		mux:       http.NewServeMux(),
+		hostInfo:  fmt.Sprintf("%s:%d", host, port),
+		startTime: time.Now(),
 
 		db:         db,
 		jobManager: jobManager,
@@ -1150,6 +1155,219 @@ func (s *HttpService) invalidateBackendsCacheHandler(w http.ResponseWriter, r *h
 	res = &result{defaultResult: newSuccessResult(), InvalidatedCount: count}
 }
 
+func (s *HttpService) nodeInfoHandler(w http.ResponseWriter, r *http.Request) {
+	log.Infof("get node info")
+
+	type configInfo struct {
+		DbType string `json:"db_type"`
+	}
+	type resourceInfo struct {
+		GoroutineCount int    `json:"goroutine_count"`
+		MemoryUsedMB   uint64 `json:"memory_used_mb"`
+	}
+	type taskStats struct {
+		Total   int `json:"total"`
+		Running int `json:"running"`
+		Paused  int `json:"paused"`
+	}
+	type nodeInfoResult struct {
+		*defaultResult
+		Version       string       `json:"version"`
+		Host          string       `json:"host"`
+		Port          int          `json:"port"`
+		UptimeSeconds int64        `json:"uptime_seconds"`
+		Config        configInfo   `json:"config"`
+		Resources     resourceInfo `json:"resources"`
+		Tasks         taskStats    `json:"tasks"`
+	}
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	jobs := s.jobManager.ListJobs()
+	running, paused := 0, 0
+	for _, job := range jobs {
+		if job.State == "paused" {
+			paused++
+		} else {
+			running++
+		}
+	}
+
+	dbType := "sqlite3"
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "db_type" {
+			dbType = f.Value.String()
+		}
+	})
+
+	result := &nodeInfoResult{
+		defaultResult: newSuccessResult(),
+		Version:       version.GetVersion(),
+		Host:          s.host,
+		Port:          s.port,
+		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
+		Config: configInfo{
+			DbType: dbType,
+		},
+		Resources: resourceInfo{
+			GoroutineCount: runtime.NumGoroutine(),
+			MemoryUsedMB:   memStats.Alloc / 1024 / 1024,
+		},
+		Tasks: taskStats{
+			Total:   len(jobs),
+			Running: running,
+			Paused:  paused,
+		},
+	}
+
+	writeJson(w, result)
+}
+
+// migrateHandler supports both single and batch migration via the same /migrate endpoint.
+// Single mode: {"name": "job1", "target_node": "host:port"}
+// Batch mode:  {"names": ["job1","job2"], "target_node": "host:port"}
+// If "name" is provided and "names" is empty, "name" is treated as names: [name].
+func (s *HttpService) migrateHandler(w http.ResponseWriter, r *http.Request) {
+	log.Infof("migrate jobs")
+
+	type resultItem struct {
+		Name    string `json:"name"`
+		Success bool   `json:"success"`
+		Error   string `json:"error,omitempty"`
+	}
+	type migrateResult struct {
+		Success   bool         `json:"success"`
+		Total     int          `json:"total"`
+		Succeeded int          `json:"succeeded"`
+		Failed    int          `json:"failed"`
+		Results   []resultItem `json:"results"`
+		ErrorMsg  string       `json:"error_msg,omitempty"`
+	}
+
+	writeErr := func(msg string) {
+		writeJson(w, &migrateResult{Success: false, ErrorMsg: msg})
+	}
+
+	var request struct {
+		Name       string   `json:"name"`
+		Names      []string `json:"names"`
+		TargetNode string   `json:"target_node"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		log.Warnf("migrate failed: %+v", err)
+		writeErr(err.Error())
+		return
+	}
+
+	// "name" -> "names" compatibility
+	if len(request.Names) == 0 && request.Name != "" {
+		request.Names = []string{request.Name}
+	}
+
+	if request.TargetNode == "" {
+		writeErr("target_node is empty")
+		return
+	}
+	if request.TargetNode == s.hostInfo {
+		writeErr("target_node is the same as current node")
+		return
+	}
+	if len(request.Names) == 0 {
+		writeErr("name or names is required")
+		return
+	}
+
+	alive, err := s.db.IsSyncerAlive(request.TargetNode, ccr.CHECK_TIMEOUT)
+	if err != nil {
+		log.Warnf("migrate: check target node alive failed, target_node: %s, err: %+v", request.TargetNode, err)
+		writeErr(fmt.Sprintf("target node %s not found or not accessible: %v", request.TargetNode, err))
+		return
+	}
+	if !alive {
+		log.Warnf("migrate: target node %s is not alive", request.TargetNode)
+		writeErr(fmt.Sprintf("target node %s is not alive (heartbeat timeout)", request.TargetNode))
+		return
+	}
+
+	result := migrateResult{
+		Success: true,
+		Total:   len(request.Names),
+		Results: make([]resultItem, 0, len(request.Names)),
+	}
+
+	anySucceeded := false
+	for _, name := range request.Names {
+		belongHost, err := s.db.GetJobBelong(name)
+		if err != nil {
+			result.Failed++
+			result.Results = append(result.Results, resultItem{Name: name, Success: false, Error: fmt.Sprintf("get job belong failed: %v", err)})
+			continue
+		}
+		if belongHost != s.hostInfo {
+			result.Failed++
+			result.Results = append(result.Results, resultItem{Name: name, Success: false, Error: fmt.Sprintf("job belongs to %s, not this node", belongHost)})
+			continue
+		}
+
+		if err := s.jobManager.ReleaseJob(name); err != nil {
+			log.Warnf("migrate: release job [%s] failed: %+v", name, err)
+			result.Failed++
+			result.Results = append(result.Results, resultItem{Name: name, Success: false, Error: err.Error()})
+			continue
+		}
+
+		if err := s.db.UpdateJobBelong(name, request.TargetNode); err != nil {
+			log.Errorf("migrate: update belong_to for [%s] failed: %+v", name, err)
+			result.Failed++
+			result.Results = append(result.Results, resultItem{Name: name, Success: false, Error: err.Error()})
+			continue
+		}
+
+		log.Infof("migrate: job [%s] migrated to %s", name, request.TargetNode)
+		result.Succeeded++
+		result.Results = append(result.Results, resultItem{Name: name, Success: true})
+		anySucceeded = true
+	}
+
+	if anySucceeded {
+		s.notifyTargetNode(request.TargetNode)
+	}
+
+	writeJson(w, &result)
+}
+
+func (s *HttpService) notifyTargetNode(targetNode string) {
+	url := fmt.Sprintf("http://%s/notify_update", targetNode)
+	resp, err := http.Post(url, "application/json", nil)
+	if err != nil {
+		log.Warnf("notify target %s failed: %v (target will pick up on next check cycle)", targetNode, err)
+		return
+	}
+	resp.Body.Close()
+}
+
+func (s *HttpService) notifyUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	log.Infof("received notify_update request")
+
+	_, jobs, err := s.db.GetStampAndJobs(s.hostInfo)
+	if err != nil {
+		log.Warnf("notify_update: get jobs failed: %+v", err)
+		writeJson(w, newErrorResult(err.Error()))
+		return
+	}
+	if len(jobs) > 0 {
+		if err := s.jobManager.Recover(jobs); err != nil {
+			log.Warnf("notify_update: recover jobs failed: %+v", err)
+			writeJson(w, newErrorResult(err.Error()))
+			return
+		}
+		log.Infof("notify_update: recovered jobs %v", jobs)
+	}
+
+	writeJson(w, newSuccessResult())
+}
+
 func (s *HttpService) RegisterHandlers() {
 	s.mux.HandleFunc("/version", s.versionHandler)
 	s.mux.HandleFunc("/create_ccr", s.createHandler)
@@ -1171,6 +1389,9 @@ func (s *HttpService) RegisterHandlers() {
 	s.mux.Handle("/metrics", xmetrics.GetHttpHandler())
 	s.mux.HandleFunc("/sync", s.syncHandler)
 	s.mux.HandleFunc("/view", s.showJobStateHandler)
+	s.mux.HandleFunc("/node_info", s.nodeInfoHandler)
+	s.mux.HandleFunc("/migrate", s.migrateHandler)
+	s.mux.HandleFunc("/notify_update", s.notifyUpdateHandler)
 }
 
 func (s *HttpService) Start() error {

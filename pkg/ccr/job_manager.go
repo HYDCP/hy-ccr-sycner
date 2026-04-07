@@ -155,6 +155,26 @@ func (jm *JobManager) RemoveJob(name string) error {
 	return nil
 }
 
+// ReleaseJob stops the job goroutine and removes it from in-memory map,
+// but does NOT delete it from the database. Used for migration to another syncer node.
+func (jm *JobManager) ReleaseJob(name string) error {
+	log.Infof("release job: %s", name)
+
+	jm.lock.Lock()
+	defer jm.lock.Unlock()
+
+	job, ok := jm.jobs[name]
+	if !ok {
+		return xerror.Errorf(xerror.Normal, "job not exist: %s", name)
+	}
+
+	job.Stop()
+	delete(jm.jobs, name)
+
+	log.Infof("job [%s] released from memory for migration", name)
+	return nil
+}
+
 // go run all jobs and wait for stop chan
 func (jm *JobManager) Start() error {
 	jm.lock.RLock()

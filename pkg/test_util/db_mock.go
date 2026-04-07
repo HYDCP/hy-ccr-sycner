@@ -22,6 +22,7 @@ package test_util
 
 import (
 	reflect "reflect"
+	"time"
 
 	gomock "go.uber.org/mock/gomock"
 )
@@ -267,4 +268,62 @@ func (m *MockDB) UpdateProgress(jobName, progress string) error {
 func (mr *MockDBMockRecorder) UpdateProgress(jobName, progress interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateProgress", reflect.TypeOf((*MockDB)(nil).UpdateProgress), jobName, progress)
+}
+
+// GetJobs mocks base method.
+func (m *MockDB) GetJobs() ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetJobs")
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetJobs indicates an expected call of GetJobs.
+func (mr *MockDBMockRecorder) GetJobs() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobs", reflect.TypeOf((*MockDB)(nil).GetJobs))
+}
+
+// UpdateJobBelong mocks base method.
+func (m *MockDB) UpdateJobBelong(jobName, targetHost string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateJobBelong", jobName, targetHost)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateJobBelong indicates an expected call of UpdateJobBelong.
+func (mr *MockDBMockRecorder) UpdateJobBelong(jobName, targetHost interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateJobBelong", reflect.TypeOf((*MockDB)(nil).UpdateJobBelong), jobName, targetHost)
+}
+
+// InvalidateSyncerStamp mocks base method.
+func (m *MockDB) InvalidateSyncerStamp(hostInfo string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "InvalidateSyncerStamp", hostInfo)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// InvalidateSyncerStamp indicates an expected call of InvalidateSyncerStamp.
+func (mr *MockDBMockRecorder) InvalidateSyncerStamp(hostInfo interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InvalidateSyncerStamp", reflect.TypeOf((*MockDB)(nil).InvalidateSyncerStamp), hostInfo)
+}
+
+// IsSyncerAlive mocks base method.
+func (m *MockDB) IsSyncerAlive(hostInfo string, timeout time.Duration) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSyncerAlive", hostInfo, timeout)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsSyncerAlive indicates an expected call of IsSyncerAlive.
+func (mr *MockDBMockRecorder) IsSyncerAlive(hostInfo, timeout interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSyncerAlive", reflect.TypeOf((*MockDB)(nil).IsSyncerAlive), hostInfo, timeout)
 }
