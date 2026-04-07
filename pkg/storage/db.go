@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"flag"
+	"time"
 )
 
 var (
@@ -79,6 +80,15 @@ type DB interface {
 	GetAllData() (map[string][]string, error)
 	// GetJobs
 	GetJobs() ([]string, error)
+
+	// UpdateJobBelong updates the belong_to field of a job to migrate it to another syncer node.
+	UpdateJobBelong(jobName string, targetHost string) error
+
+	// InvalidateSyncerStamp resets a syncer's timestamp to 0, causing its next
+	// RefreshSyncer CAS to fail and triggering handleUpdate to pick up new jobs.
+	InvalidateSyncerStamp(hostInfo string) error
+	// IsSyncerAlive checks if a syncer node's heartbeat is within the given timeout.
+	IsSyncerAlive(hostInfo string, timeout time.Duration) (bool, error)
 }
 
 func SetDBOptions(db *sql.DB) {

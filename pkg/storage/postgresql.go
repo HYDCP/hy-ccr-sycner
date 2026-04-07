@@ -430,6 +430,43 @@ func (s *PostgresqlDB) RebalanceLoadFromDeadSyncers(syncers []string) error {
 	return nil
 }
 
+func (s *PostgresqlDB) UpdateJobBelong(jobName string, targetHost string) error {
+	result, err := s.db.Exec(fmt.Sprintf("UPDATE %s.jobs SET belong_to = '%s' WHERE job_name = '%s'", s.dbName, targetHost, jobName))
+	if err != nil {
+		return xerror.Wrapf(err, xerror.DB, "postgresql: update job belong_to failed, name: %s", jobName)
+	}
+	rowNum, err := result.RowsAffected()
+	if err != nil {
+		return xerror.Wrapf(err, xerror.DB, "postgresql: update job belong_to get affected rows failed, name: %s", jobName)
+	}
+	if rowNum == 0 {
+		return ErrJobNotExists
+	}
+	return nil
+}
+
+func (s *PostgresqlDB) InvalidateSyncerStamp(hostInfo string) error {
+	result, err := s.db.Exec(fmt.Sprintf("UPDATE %s.syncers SET timestamp = 0 WHERE host_info = '%s'", s.dbName, hostInfo))
+	if err != nil {
+		return xerror.Wrapf(err, xerror.DB, "postgresql: invalidate syncer stamp failed, host: %s", hostInfo)
+	}
+	if rowNum, err := result.RowsAffected(); err != nil {
+		return xerror.Wrapf(err, xerror.DB, "postgresql: invalidate syncer stamp get affected rows failed, host: %s", hostInfo)
+	} else if rowNum == 0 {
+		return xerror.Errorf(xerror.DB, "postgresql: syncer not found, host: %s", hostInfo)
+	}
+	return nil
+}
+
+func (s *PostgresqlDB) IsSyncerAlive(hostInfo string, timeout time.Duration) (bool, error) {
+	var timestamp int64
+	err := s.db.QueryRow(fmt.Sprintf("SELECT timestamp FROM %s.syncers WHERE host_info = '%s'", s.dbName, hostInfo)).Scan(&timestamp)
+	if err != nil {
+		return false, xerror.Wrapf(err, xerror.DB, "postgresql: check syncer alive failed, host: %s", hostInfo)
+	}
+	return time.Since(time.Unix(0, timestamp)) < timeout, nil
+}
+
 func (s *PostgresqlDB) GetAllData() (map[string][]string, error) {
 	ans := make(map[string][]string)
 
