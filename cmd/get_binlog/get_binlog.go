@@ -28,6 +28,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const defaultNumAcquired int64 = 1
+
 // commit_seq flag default 0
 var (
 	commitSeq int64
@@ -55,8 +57,8 @@ func test_get_binlog(spec *base.Spec) {
 		panic(err)
 	}
 	t_spec := *spec
-	resp, err := rpc.GetBinlog(&t_spec, commitSeq)
-	// resp, err := rpc.GetBinlog(spec, commitSeq)
+	resp, err := rpc.GetBinlog(&t_spec, commitSeq, defaultNumAcquired)
+	// resp, err := rpc.GetBinlog(spec, commitSeq, defaultNumAcquired)
 	if err != nil {
 		panic(err)
 	}

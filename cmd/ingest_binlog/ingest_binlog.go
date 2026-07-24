@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -66,7 +67,7 @@ func test_get(t *base.Spec) {
 	if err != nil {
 		panic(err)
 	}
-	resp, err := rpc.GetBinlog(t, commitSeq)
+	resp, err := rpc.GetBinlog(t, commitSeq, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -104,7 +105,7 @@ func test_commit(t *base.Spec) {
 		panic(err)
 	}
 
-	resp, err := rpc.CommitTransaction(t, txnId, newCommitInfos())
+	resp, err := rpc.CommitTransaction(t, txnId, newCommitInfos(), false)
 	if err != nil {
 		panic(err)
 	}
@@ -151,7 +152,7 @@ func test_ingest_be() {
 		LoadId:         loadId,
 	}
 
-	resp, err := rpc.IngestBinlog(req)
+	resp, err := rpc.IngestBinlog(context.Background(), req)
 	if err != nil {
 		panic(err)
 	}
