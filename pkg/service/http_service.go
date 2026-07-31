@@ -31,6 +31,7 @@ import (
 	"github.com/selectdb/ccr_syncer/pkg/ccr"
 	"github.com/selectdb/ccr_syncer/pkg/ccr/base"
 	"github.com/selectdb/ccr_syncer/pkg/rpc"
+	tstatus "github.com/selectdb/ccr_syncer/pkg/rpc/kitex_gen/status"
 	"github.com/selectdb/ccr_syncer/pkg/storage"
 	"github.com/selectdb/ccr_syncer/pkg/utils"
 	"github.com/selectdb/ccr_syncer/pkg/version"
@@ -327,6 +328,15 @@ func (s *HttpService) getLagHandler(w http.ResponseWriter, r *http.Request) {
 		log.Warnf("rpc get binlog failed: %+v", err)
 		lagResult = &result{
 			defaultResult: newErrorResult(err.Error()),
+		}
+		return
+	}
+
+	if status := resp.GetStatus(); status.GetStatusCode() != tstatus.TStatusCode_OK {
+		errMsg := utils.FirstOr(status.GetErrorMsgs(), status.GetStatusCode().String())
+		log.Warnf("get binlog lag failed, job: %s, status: %v", request.Name, status)
+		lagResult = &result{
+			defaultResult: newErrorResult(errMsg),
 		}
 		return
 	}
@@ -716,8 +726,18 @@ func (s *HttpService) showJobStateHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 
+		lagStatusOK := resp.GetStatus().GetStatusCode() == tstatus.TStatusCode_OK
+		if !lagStatusOK {
+			log.Warnf("get binlog lag failed, job: %s, status: %v", jobName, resp.GetStatus())
+		}
+
 		lag := resp.GetLag()
-		line = append(line, fmt.Sprintf("%v", lag))
+		if lagStatusOK {
+			line = append(line, fmt.Sprintf("%v", lag))
+		} else {
+			// Keep the column numeric, -1 means the lag is unavailable.
+			line = append(line, "-1")
+		}
 		// lag(secs)
 		var lastBinlogTimestamp, firstBinlogTimestamp string
 
@@ -733,10 +753,12 @@ func (s *HttpService) showJobStateHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		totalTime := CalculateTimeDifferenceInSeconds(lastBinlogTimestamp, firstBinlogTimestamp)
-		if totalTime > 0 {
+		if lagStatusOK && totalTime > 0 {
 			line = append(line, fmt.Sprintf("%v", lag/int64(totalTime)))
-		} else {
+		} else if lagStatusOK {
 			line = append(line, fmt.Sprintf("%v", 0))
+		} else {
+			line = append(line, "-1")
 		}
 
 		// sync state
