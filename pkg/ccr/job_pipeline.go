@@ -3,6 +3,7 @@ package ccr
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"time"
@@ -241,6 +242,13 @@ func (j *Job) pipelineSync() error {
 			// fetch the binlogs, if the binlogs is empty.
 			if !j.pipelineCtx.hasBinlogs() {
 				if err := j.getNextBinlogs(); err != nil {
+					if errors.Is(err, errTriggerFullSync) {
+						j.resetPipeline()
+						j.Extra.BinlogGapResyncAt = time.Now()
+						return j.NewSnapshot(j.progress.CommitSeq,
+							fmt.Sprintf("binlog gap: commit seq %d is older than the earliest binlog in upstream, trigger full sync",
+								j.progress.CommitSeq))
+					}
 					return err
 				}
 				hasMoreBinlogs = len(j.pipelineCtx.Binlogs) > 0
@@ -449,6 +457,10 @@ func (j *Job) rollbackPipeline() error {
 	}
 }
 
+// errTriggerFullSync is a sentinel error returned by getNextBinlogs when a binlog gap
+// is detected, the pipeline should be aborted and a full sync should be triggered.
+var errTriggerFullSync = xerror.NewWithoutStack(xerror.Normal, "trigger full sync by binlog gap")
+
 func (j *Job) getNextBinlogs() error {
 	if len(j.pipelineCtx.Binlogs) > 0 {
 		panic("should not be here")
@@ -477,6 +489,18 @@ func (j *Job) getNextBinlogs() error {
 	switch status.StatusCode {
 	case tstatus.TStatusCode_OK:
 	case tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ:
+		reason := fmt.Sprintf("binlog gap: commit seq %d is older than the earliest binlog in upstream, data may be lost", commitSeq)
+		log.Warnf("%s, job: %s", reason, j.Name)
+		xmetrics.RecordError(j.Name, xerror.NewWithoutStack(xerror.Normal, reason))
+		if err := j.checkIntactBeforeGapResync(); err != nil {
+			return err
+		}
+		if time.Since(j.Extra.BinlogGapResyncAt) < binlogGapResyncCooldown {
+			return xerror.Errorf(xerror.Normal,
+				"%s; auto full sync is in cooldown (%s), run force_fullsync to recover immediately, job: %s",
+				reason, binlogGapResyncCooldown, j.Name)
+		}
+		return errTriggerFullSync
 	case tstatus.TStatusCode_BINLOG_TOO_NEW_COMMIT_SEQ:
 		// consume prev txn id for not to check and wait prev transaction finished
 		if j.progress.PrevTxnId != -1 {

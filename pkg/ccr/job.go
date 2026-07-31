@@ -83,6 +83,7 @@ var (
 
 	flagBinlogBatchSize                      int64
 	flagMaxBackupRestoreConcurrencyPerTarget int64
+	binlogGapResyncCooldown                  time.Duration
 
 	ErrMaterializedViewTable = xerror.NewWithoutStack(xerror.Meta, "Not support table type: materialized view")
 )
@@ -132,6 +133,8 @@ func init() {
 	flag.Int64Var(&flagBinlogBatchSize, "binlog_batch_size", 16, "the max num of binlogs to get in a batch")
 	flag.Int64Var(&flagMaxBackupRestoreConcurrencyPerTarget, "max_backup_restore_concurrency_per_target", 10,
 		"the max concurrency of backup or restore jobs per upstream or downstream target, 0 or negative means no limit. Only for full sync.")
+	flag.DurationVar(&binlogGapResyncCooldown, "binlog_gap_resync_cooldown", time.Hour,
+		"the cooldown between two auto full syncs triggered by binlog gap")
 }
 
 // FeatureOverrideReplicationNum returns whether the feature is enabled
@@ -212,6 +215,9 @@ type JobExtra struct {
 
 	// New partial snapshot info
 	PartialSnapshotParams *PartialSnapshotParams `json:"-"`
+
+	// The last time a full sync was triggered by binlog gap, don't need to persist.
+	BinlogGapResyncAt time.Time `json:"-"`
 }
 
 type Job struct {
@@ -3932,6 +3938,19 @@ func (j *Job) incrementalSyncInternal() error {
 		switch status.StatusCode {
 		case tstatus.TStatusCode_OK:
 		case tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ:
+			reason := fmt.Sprintf("binlog gap: commit seq %d is older than the earliest binlog in upstream, data may be lost", commitSeq)
+			log.Warnf("%s, job: %s", reason, j.Name)
+			xmetrics.RecordError(j.Name, xerror.NewWithoutStack(xerror.Normal, reason))
+			if err := j.checkIntactBeforeGapResync(); err != nil {
+				return err
+			}
+			if time.Since(j.Extra.BinlogGapResyncAt) < binlogGapResyncCooldown {
+				return xerror.Errorf(xerror.Normal,
+					"%s; auto full sync is in cooldown (%s), run force_fullsync to recover immediately, job: %s",
+					reason, binlogGapResyncCooldown, j.Name)
+			}
+			j.Extra.BinlogGapResyncAt = time.Now()
+			return j.NewSnapshot(commitSeq, reason)
 		case tstatus.TStatusCode_BINLOG_TOO_NEW_COMMIT_SEQ:
 			// consume prev txn id for not to check and wait prev transaction finished
 			if j.progress.PrevTxnId != -1 {
@@ -4821,6 +4840,34 @@ func (j *Job) IsSourceTableExists(tableId int64, tableName string) (bool, error)
 	} else {
 		return table.Name == tableName, nil
 	}
+}
+
+// checkIntactBeforeGapResync checks whether the upstream object is intact before
+// triggering a full sync by binlog gap. It returns nil if a full sync is allowed,
+// and an error if the table has been dropped/recreated or the check failed.
+func (j *Job) checkIntactBeforeGapResync() error {
+	if j.SyncType == DBSync {
+		return nil // db level gap, do full sync directly; if the db is dropped, fullSync fails with a visible error.
+	}
+
+	// TableSync: check the recorded table id first.
+	if _, err := j.srcMeta.UpdateTable("", j.Src.TableId); err == nil {
+		return nil // the table id still exists, a real binlog gap.
+	} else if !xerror.IsCategory(err, xerror.Meta) {
+		return err // check failed (network etc), retry in the next round.
+	}
+
+	// The table id is gone, check by name to distinguish dropped from recreated.
+	if _, err := j.srcMeta.UpdateTable(j.Src.Table, 0); err != nil && xerror.IsCategory(err, xerror.Meta) {
+		return xerror.Errorf(xerror.Normal,
+			"src table %s (id %d) has been dropped, skip auto full sync; desync or recreate the job",
+			j.Src.Table, j.Src.TableId)
+	} else if err != nil {
+		return err
+	}
+	return xerror.Errorf(xerror.Normal,
+		"src table %s has been recreated (id %d changed), skip auto full sync; recreate the job or force_fullsync manually",
+		j.Src.Table, j.Src.TableId)
 }
 
 func (j *Job) GetJobProgress() *JobProgress {
