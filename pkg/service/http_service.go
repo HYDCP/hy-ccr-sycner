@@ -726,9 +726,10 @@ func (s *HttpService) showJobStateHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		lagStatusOK := resp.GetStatus().GetStatusCode() == tstatus.TStatusCode_OK
+		status := resp.GetStatus()
+		lagStatusOK := status.GetStatusCode() == tstatus.TStatusCode_OK
 		if !lagStatusOK {
-			log.Warnf("get binlog lag failed, job: %s, status: %v", jobName, resp.GetStatus())
+			log.Warnf("get binlog lag failed, job: %s, status: %v", jobName, status)
 		}
 
 		lag := resp.GetLag()
