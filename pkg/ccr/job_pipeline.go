@@ -249,7 +249,7 @@ func (j *Job) pipelineSync() error {
 						j.Extra.BinlogGapResyncAt = time.Now()
 						j.Extra.BinlogGapResyncReason = fmt.Sprintf(
 							"binlog gap: commit seq %d is older than the earliest binlog in upstream, trigger full sync",
-							j.progress.CommitSeq)
+							j.pipelineCtx.NextCommitSeq)
 						j.resetPipeline() // reset the pipeline context, to force the pipeline to rollback.
 					}
 					return err

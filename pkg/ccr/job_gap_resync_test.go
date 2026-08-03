@@ -17,10 +17,13 @@
 package ccr
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/selectdb/ccr_syncer/pkg/ccr/base"
 	"github.com/selectdb/ccr_syncer/pkg/rpc"
@@ -127,15 +130,24 @@ func TestCheckIntactBeforeGapResyncDBSync(t *testing.T) {
 	}
 }
 
-// fakeFeRpc implements rpc.IFeRpc, only RollbackTransaction is stubbed, any
-// other call panics.
+// fakeFeRpc implements rpc.IFeRpc, only GetBinlog and RollbackTransaction are
+// stubbed, any other call panics.
 type fakeFeRpc struct {
 	rpc.IFeRpc
+	getBinlogResp    *festruct.TGetBinlogResult_
 	rolledBackTxnIds []int64
+	onRollback       func()
+}
+
+func (f *fakeFeRpc) GetBinlog(spec *base.Spec, commitSeq, numAcquired int64) (*festruct.TGetBinlogResult_, error) {
+	return f.getBinlogResp, nil
 }
 
 func (f *fakeFeRpc) RollbackTransaction(spec *base.Spec, txnId int64) (*festruct.TRollbackTxnResult_, error) {
 	f.rolledBackTxnIds = append(f.rolledBackTxnIds, txnId)
+	if f.onRollback != nil {
+		f.onRollback()
+	}
 	return &festruct.TRollbackTxnResult_{
 		Status: &tstatus.TStatus{StatusCode: tstatus.TStatusCode_OK},
 	}, nil
@@ -196,5 +208,160 @@ func TestPipelineGapResyncRollbackBeforeFullSync(t *testing.T) {
 	}
 	if job.Extra.BinlogGapResyncReason != "" {
 		t.Fatalf("expect the gap resync reason is cleared, but got: %s", job.Extra.BinlogGapResyncReason)
+	}
+}
+
+// The full chain of the pipeline gap resync: the TOO_OLD response stashes the
+// full sync reason and resets the pipeline in the first round, then the next
+// round rolls back the inflight txns before triggering the full sync.
+func TestPipelineGapResyncFullChain(t *testing.T) {
+	db, err := storage.NewSQLiteDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("new sqlite db failed: %+v", err)
+	}
+
+	feRpc := &fakeFeRpc{
+		getBinlogResp: &festruct.TGetBinlogResult_{
+			Status: &tstatus.TStatus{StatusCode: tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ},
+		},
+	}
+
+	progress := NewJobProgress("test_pipeline_gap_chain", TableSync, db)
+	progress.SyncState = TableIncrementalSync
+	progress.SubSyncState = LaunchTransaction
+	progress.CommitSeq = 1234
+	progress.InMemoryData = &PipelineInMemoryData{
+		RunningTxnList: []*TxnContext{{TxnId: 1001}},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	job := &Job{
+		Name:     "test_pipeline_gap_chain",
+		SyncType: TableSync,
+		Src:      base.Spec{Database: "db", Table: "t", TableId: 1},
+		Dest:     base.Spec{Database: "db", Table: "t", TableId: 2},
+		srcMeta: &fakeMetaer{updateTable: func(tableName string, tableId int64) (*TableMeta, error) {
+			return &TableMeta{Id: 1, Name: "t"}, nil
+		}},
+		factory:  &Factory{IRpcFactory: &fakeRpcFactory{feRpc: feRpc}},
+		progress: progress,
+		pipelineCtx: &JobPipelineContext{
+			NextCommitSeq: 2345,
+			Context:       ctx,
+			Cancel:        cancel,
+		},
+	}
+
+	var syncStateAtRollback SyncState
+	feRpc.onRollback = func() {
+		syncStateAtRollback = job.progress.SyncState
+	}
+
+	// Round 1: the gap is detected, the full sync reason is stashed and the
+	// pipeline context is reset, but the full sync is not triggered yet.
+	err = job.pipelineSync()
+	if !errors.Is(err, errTriggerFullSync) {
+		t.Fatalf("expect errTriggerFullSync, but got: %+v", err)
+	}
+	if job.Extra.BinlogGapResyncReason == "" {
+		t.Fatal("expect the gap resync reason is stashed")
+	}
+	if !strings.Contains(job.Extra.BinlogGapResyncReason, "2345") {
+		t.Fatalf("expect the reason contains the pipeline next commit seq 2345, but got: %s",
+			job.Extra.BinlogGapResyncReason)
+	}
+	if job.Extra.BinlogGapResyncAt.IsZero() {
+		t.Fatal("expect the gap resync time is recorded")
+	}
+	if job.pipelineCtx != nil {
+		t.Fatal("expect the pipeline context is reset")
+	}
+	if progress.SyncState != TableIncrementalSync {
+		t.Fatalf("expect the job is still in incremental sync, but got: %s", progress.SyncState)
+	}
+
+	// Round 2: the inflight txns are rolled back first, then the full sync is
+	// triggered.
+	if err := job.pipelineSync(); err != nil {
+		t.Fatalf("pipeline sync failed: %+v", err)
+	}
+	if !reflect.DeepEqual(feRpc.rolledBackTxnIds, []int64{1001}) {
+		t.Fatalf("expect rollback txn 1001, but got: %v", feRpc.rolledBackTxnIds)
+	}
+	if syncStateAtRollback != TableIncrementalSync {
+		t.Fatalf("expect the rollback happens before the full sync, but the sync state at rollback is: %s",
+			syncStateAtRollback)
+	}
+	if progress.SyncState != TableFullSync || progress.SubSyncState != BeginCreateSnapshot {
+		t.Fatalf("expect full sync state, but got: %s/%s", progress.SyncState, progress.SubSyncState)
+	}
+	if job.Extra.BinlogGapResyncReason != "" {
+		t.Fatalf("expect the gap resync reason is cleared, but got: %s", job.Extra.BinlogGapResyncReason)
+	}
+}
+
+// The auto full sync is refused in the cooldown, the pipeline is kept intact
+// for the next round.
+func TestPipelineGapResyncCooldown(t *testing.T) {
+	db, err := storage.NewSQLiteDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("new sqlite db failed: %+v", err)
+	}
+
+	feRpc := &fakeFeRpc{
+		getBinlogResp: &festruct.TGetBinlogResult_{
+			Status: &tstatus.TStatus{StatusCode: tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ},
+		},
+	}
+
+	progress := NewJobProgress("test_pipeline_gap_cooldown", TableSync, db)
+	progress.SyncState = TableIncrementalSync
+	progress.SubSyncState = LaunchTransaction
+	progress.CommitSeq = 1234
+	progress.InMemoryData = &PipelineInMemoryData{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	job := &Job{
+		Name:     "test_pipeline_gap_cooldown",
+		SyncType: TableSync,
+		Src:      base.Spec{Database: "db", Table: "t", TableId: 1},
+		Dest:     base.Spec{Database: "db", Table: "t", TableId: 2},
+		Extra: JobExtra{
+			BinlogGapResyncAt: time.Now(), // a gap resync was just triggered
+		},
+		srcMeta: &fakeMetaer{updateTable: func(tableName string, tableId int64) (*TableMeta, error) {
+			return &TableMeta{Id: 1, Name: "t"}, nil
+		}},
+		factory:  &Factory{IRpcFactory: &fakeRpcFactory{feRpc: feRpc}},
+		progress: progress,
+		pipelineCtx: &JobPipelineContext{
+			NextCommitSeq: 2345,
+			Context:       ctx,
+			Cancel:        cancel,
+		},
+	}
+
+	err = job.pipelineSync()
+	if err == nil {
+		t.Fatal("expect a cooldown error, but got nil")
+	}
+	if errors.Is(err, errTriggerFullSync) {
+		t.Fatalf("expect a cooldown error, but got errTriggerFullSync")
+	}
+	if !strings.Contains(err.Error(), "cooldown") {
+		t.Fatalf("expect a cooldown error, but got: %+v", err)
+	}
+	if job.Extra.BinlogGapResyncReason != "" {
+		t.Fatalf("expect the gap resync reason is not stashed, but got: %s", job.Extra.BinlogGapResyncReason)
+	}
+	if job.pipelineCtx == nil {
+		t.Fatal("expect the pipeline context is kept in the cooldown")
+	}
+	if progress.SyncState != TableIncrementalSync {
+		t.Fatalf("expect the job is still in incremental sync, but got: %s", progress.SyncState)
 	}
 }
