@@ -218,6 +218,10 @@ type JobExtra struct {
 
 	// The last time a full sync was triggered by binlog gap, don't need to persist.
 	BinlogGapResyncAt time.Time `json:"-"`
+
+	// The pending full sync reason when a binlog gap is detected in the pipeline sync,
+	// the full sync is triggered after the inflight txns are rolled back. Memory only.
+	BinlogGapResyncReason string `json:"-"`
 }
 
 type Job struct {
@@ -4176,6 +4180,9 @@ func (j *Job) NewSnapshot(commitSeq int64, fullSyncInfo string) error {
 		j.progress.SetFullSyncInfo(fullSyncInfo)
 	}
 
+	// A pending gap resync (if any) is superseded by this snapshot.
+	j.Extra.BinlogGapResyncReason = ""
+
 	j.progress.PartialSyncData = nil
 	j.progress.TableAliases = nil
 	j.progress.SyncId += 1
@@ -4851,7 +4858,15 @@ func (j *Job) checkIntactBeforeGapResync() error {
 	}
 
 	// TableSync: check the recorded table id first.
-	if _, err := j.srcMeta.UpdateTable("", j.Src.TableId); err == nil {
+	if table, err := j.srcMeta.UpdateTable("", j.Src.TableId); err == nil {
+		if table.Name != j.Src.Table {
+			// The table id is alive but bound to another name: the table was renamed,
+			// or the id was reused by a new table. A full sync would snapshot the
+			// wrong table by name, refuse it.
+			return xerror.Errorf(xerror.Normal,
+				"src table id %d is now table %s, but the job syncs table %s (renamed or id reused), skip auto full sync; recreate the job or force_fullsync manually",
+				j.Src.TableId, table.Name, j.Src.Table)
+		}
 		return nil // the table id still exists, a real binlog gap.
 	} else if !xerror.IsCategory(err, xerror.Meta) {
 		return err // check failed (network etc), retry in the next round.

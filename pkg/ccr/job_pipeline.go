@@ -243,11 +243,14 @@ func (j *Job) pipelineSync() error {
 			if !j.pipelineCtx.hasBinlogs() {
 				if err := j.getNextBinlogs(); err != nil {
 					if errors.Is(err, errTriggerFullSync) {
-						j.resetPipeline()
+						// Stash the full sync reason and rollback the inflight txns
+						// first, the full sync is triggered in the RollbackPipeline
+						// state after the rollback is done.
 						j.Extra.BinlogGapResyncAt = time.Now()
-						return j.NewSnapshot(j.progress.CommitSeq,
-							fmt.Sprintf("binlog gap: commit seq %d is older than the earliest binlog in upstream, trigger full sync",
-								j.progress.CommitSeq))
+						j.Extra.BinlogGapResyncReason = fmt.Sprintf(
+							"binlog gap: commit seq %d is older than the earliest binlog in upstream, trigger full sync",
+							j.progress.CommitSeq)
+						j.resetPipeline() // reset the pipeline context, to force the pipeline to rollback.
 					}
 					return err
 				}
@@ -353,6 +356,14 @@ func (j *Job) pipelineSync() error {
 				}
 			}
 			j.progress.NextSubCheckpoint(Done, nil)
+
+			// A binlog gap was detected before the rollback, the inflight txns are
+			// rolled back now, trigger the pending full sync.
+			if j.Extra.BinlogGapResyncReason != "" {
+				reason := j.Extra.BinlogGapResyncReason
+				j.Extra.BinlogGapResyncReason = ""
+				return j.NewSnapshot(j.progress.CommitSeq, reason)
+			}
 
 		default:
 			return xerror.Errorf(xerror.Normal, "unknown pipeline sync state: %v", j.progress.SubSyncState)
