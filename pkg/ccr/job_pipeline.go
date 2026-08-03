@@ -362,7 +362,7 @@ func (j *Job) pipelineSync() error {
 			if j.Extra.BinlogGapResyncReason != "" {
 				reason := j.Extra.BinlogGapResyncReason
 				j.Extra.BinlogGapResyncReason = ""
-				return j.NewSnapshot(j.progress.CommitSeq, reason)
+				return j.newGapResyncSnapshot(j.progress.CommitSeq, reason)
 			}
 
 		default:

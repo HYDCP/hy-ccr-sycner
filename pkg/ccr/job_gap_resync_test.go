@@ -135,12 +135,17 @@ func TestCheckIntactBeforeGapResyncDBSync(t *testing.T) {
 type fakeFeRpc struct {
 	rpc.IFeRpc
 	getBinlogResp    *festruct.TGetBinlogResult_
+	getSnapshotResp  *festruct.TGetSnapshotResult_
 	rolledBackTxnIds []int64
 	onRollback       func()
 }
 
 func (f *fakeFeRpc) GetBinlog(spec *base.Spec, commitSeq, numAcquired int64) (*festruct.TGetBinlogResult_, error) {
 	return f.getBinlogResp, nil
+}
+
+func (f *fakeFeRpc) GetSnapshot(spec *base.Spec, labelName string, compress bool) (*festruct.TGetSnapshotResult_, error) {
+	return f.getSnapshotResp, nil
 }
 
 func (f *fakeFeRpc) RollbackTransaction(spec *base.Spec, txnId int64) (*festruct.TRollbackTxnResult_, error) {
@@ -363,5 +368,152 @@ func TestPipelineGapResyncCooldown(t *testing.T) {
 	}
 	if progress.SyncState != TableIncrementalSync {
 		t.Fatalf("expect the job is still in incremental sync, but got: %s", progress.SyncState)
+	}
+}
+
+func newGapResyncGuardTestJob(t *testing.T, name string) *Job {
+	db, err := storage.NewSQLiteDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("new sqlite db failed: %+v", err)
+	}
+
+	progress := NewJobProgress(name, TableSync, db)
+	progress.SyncState = TableIncrementalSync
+	progress.SubSyncState = Done
+	progress.CommitSeq = 1234
+
+	return &Job{
+		Name:     name,
+		SyncType: TableSync,
+		Src:      base.Spec{Database: "db", Table: "t", TableId: 1},
+		Dest:     base.Spec{Database: "db", Table: "t", TableId: 2},
+		progress: progress,
+	}
+}
+
+func TestCheckGapResyncTableId(t *testing.T) {
+	t.Run("guard disarmed", func(t *testing.T) {
+		job := newGapResyncGuardTestJob(t, "test_guard_disarmed")
+		if err := job.checkGapResyncTableId(2); err != nil {
+			t.Fatalf("expect no error when the guard is disarmed, but got: %+v", err)
+		}
+	})
+
+	t.Run("guard armed and matched", func(t *testing.T) {
+		job := newGapResyncGuardTestJob(t, "test_guard_matched")
+		job.progress.GapResyncTableId = 1
+		if err := job.checkGapResyncTableId(1); err != nil {
+			t.Fatalf("expect no error when the snapshot id matches, but got: %+v", err)
+		}
+		if job.progress.GapResyncTableId != 0 {
+			t.Fatalf("expect the guard is disarmed, but got: %d", job.progress.GapResyncTableId)
+		}
+	})
+
+	t.Run("guard armed and mismatched", func(t *testing.T) {
+		job := newGapResyncGuardTestJob(t, "test_guard_mismatched")
+		job.progress.GapResyncTableId = 1
+		err := job.checkGapResyncTableId(2)
+		if err == nil {
+			t.Fatal("expect an error when the snapshot id mismatches, but got nil")
+		}
+		if !strings.Contains(err.Error(), "gap resync expected table id") {
+			t.Fatalf("expect a gap resync guard error, but got: %+v", err)
+		}
+		if job.progress.GapResyncTableId != 1 {
+			t.Fatalf("expect the guard is kept, but got: %d", job.progress.GapResyncTableId)
+		}
+		if job.Src.TableId != 1 {
+			t.Fatalf("expect the src table id is not mutated, but got: %d", job.Src.TableId)
+		}
+	})
+}
+
+// The pre-check passed, the full sync is triggered by the gap resync, then the
+// table is renamed and the name is reused by a new table (id 2) before the
+// snapshot is taken. The snapshot is taken from the new table, the guard must
+// refuse it and keep Src.TableId unchanged.
+func TestFullSyncGapResyncTableIdMismatch(t *testing.T) {
+	jobInfo := `{"backup_objects":{"t":{"id":2,"partitions":{}}},"table_commit_seq_map":{"2":2345}}`
+	feRpc := &fakeFeRpc{
+		getSnapshotResp: &festruct.TGetSnapshotResult_{
+			Status:  &tstatus.TStatus{StatusCode: tstatus.TStatusCode_OK},
+			JobInfo: []byte(jobInfo),
+		},
+	}
+
+	job := newGapResyncGuardTestJob(t, "test_fullsync_guard_mismatch")
+	job.factory = &Factory{IRpcFactory: &fakeRpcFactory{feRpc: feRpc}}
+	job.progress.SyncState = TableFullSync
+	job.progress.SubSyncState = GetSnapshotInfo
+	job.progress.PersistData = "ccr_snapshot_test"
+	job.progress.GapResyncTableId = 1
+
+	err := job.fullSync()
+	if err == nil {
+		t.Fatal("expect an error when the snapshot id mismatches, but got nil")
+	}
+	if !strings.Contains(err.Error(), "gap resync expected table id") {
+		t.Fatalf("expect a gap resync guard error, but got: %+v", err)
+	}
+	if job.Src.TableId != 1 {
+		t.Fatalf("expect the src table id is not mutated, but got: %d", job.Src.TableId)
+	}
+	if job.progress.GapResyncTableId != 1 {
+		t.Fatalf("expect the guard is kept, but got: %d", job.progress.GapResyncTableId)
+	}
+}
+
+// Without the guard, the id mismatch keeps the existing behavior: adopt the
+// new table id and force a new full sync (used by force_fullsync and replace
+// table).
+func TestFullSyncTableIdMismatchWithoutGuard(t *testing.T) {
+	jobInfo := `{"backup_objects":{"t":{"id":2,"partitions":{}}},"table_commit_seq_map":{"2":2345}}`
+	feRpc := &fakeFeRpc{
+		getSnapshotResp: &festruct.TGetSnapshotResult_{
+			Status:  &tstatus.TStatus{StatusCode: tstatus.TStatusCode_OK},
+			JobInfo: []byte(jobInfo),
+		},
+	}
+
+	job := newGapResyncGuardTestJob(t, "test_fullsync_no_guard")
+	job.factory = &Factory{IRpcFactory: &fakeRpcFactory{feRpc: feRpc}}
+	job.progress.SyncState = TableFullSync
+	job.progress.SubSyncState = GetSnapshotInfo
+	job.progress.PersistData = "ccr_snapshot_test"
+
+	if err := job.fullSync(); err != nil {
+		t.Fatalf("full sync failed: %+v", err)
+	}
+	if job.Src.TableId != 2 {
+		t.Fatalf("expect the src table id is adopted to 2, but got: %d", job.Src.TableId)
+	}
+	if job.progress.SyncState != TableFullSync || job.progress.SubSyncState != BeginCreateSnapshot {
+		t.Fatalf("expect a new full sync is triggered, but got: %s/%s",
+			job.progress.SyncState, job.progress.SubSyncState)
+	}
+}
+
+// force_fullsync is the documented manual recovery, it disarms the guard so
+// that the full sync can adopt a recreated table.
+func TestForceFullsyncDisarmsGapResyncGuard(t *testing.T) {
+	job := newGapResyncGuardTestJob(t, "test_force_fullsync_disarm")
+	job.Extra.SkipBinlog = true
+	job.Extra.SkipBy = SkipByFullSync
+	job.progress.GapResyncTableId = 1
+
+	exit, err := job.maySkipBinlog()
+	if err != nil {
+		t.Fatalf("may skip binlog failed: %+v", err)
+	}
+	if !exit {
+		t.Fatal("expect the binlog is skipped by force fullsync")
+	}
+	if job.progress.GapResyncTableId != 0 {
+		t.Fatalf("expect the guard is disarmed, but got: %d", job.progress.GapResyncTableId)
+	}
+	if job.progress.SyncState != TableFullSync || job.progress.SubSyncState != BeginCreateSnapshot {
+		t.Fatalf("expect a new full sync is triggered, but got: %s/%s",
+			job.progress.SyncState, job.progress.SubSyncState)
 	}
 }

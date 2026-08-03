@@ -207,6 +207,11 @@ type JobProgress struct {
 	TableAliases map[string]string `json:"table_aliases,omitempty"`
 	PrevTxnId    int64             `json:"prev_txn_id,omitempty"`
 
+	// The expected src table id of the full sync triggered by binlog gap resync.
+	// The snapshot identity is verified against it in GetSnapshotInfo, zero
+	// means the guard is disarmed.
+	GapResyncTableId int64 `json:"gap_resync_table_id,omitempty"`
+
 	// The shadow indexes of the pending schema changes
 	ShadowIndexes map[int64]int64 `json:"shadow_index_map,omitempty"`
 

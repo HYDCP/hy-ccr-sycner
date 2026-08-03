@@ -1219,6 +1219,8 @@ func (j *Job) fullSyncWithPermit() error {
 		if j.SyncType == TableSync {
 			if backupObject, ok := backupJobInfo.BackupObjects[j.Src.Table]; !ok {
 				return xerror.Errorf(xerror.Normal, "table %s not found in backup objects", j.Src.Table)
+			} else if err := j.checkGapResyncTableId(backupObject.Id); err != nil {
+				return err
 			} else if backupObject.Id != j.Src.TableId {
 				// Might be the table has been replace.
 				info := fmt.Sprintf("full sync table %s id not match, force full sync. table id %d, backup object id %d",
@@ -3884,6 +3886,9 @@ func (j *Job) maySkipBinlog() (bool, error) {
 	if j.Extra.SkipBinlog && j.Extra.SkipBy == SkipByFullSync {
 		info := fmt.Sprintf("the user required skipping the binlog, commit seq %d", j.progress.CommitSeq)
 		log.Warnf("force full sync, because %s", info)
+		// The user takes over the table identity explicitly, disarm the gap
+		// resync guard so that the full sync can adopt a recreated table.
+		j.progress.GapResyncTableId = 0
 		return true, j.NewSnapshot(j.progress.CommitSeq, info)
 	} else if j.Extra.SkipBinlog && j.Extra.SkipBy == SkipByPartialSync {
 		log.Warnf("force partial sync, because the user required skipping the binlog, commit seq %d, table id %d, table %s",
@@ -3954,7 +3959,7 @@ func (j *Job) incrementalSyncInternal() error {
 					reason, binlogGapResyncCooldown, j.Name)
 			}
 			j.Extra.BinlogGapResyncAt = time.Now()
-			return j.NewSnapshot(commitSeq, reason)
+			return j.newGapResyncSnapshot(commitSeq, reason)
 		case tstatus.TStatusCode_BINLOG_TOO_NEW_COMMIT_SEQ:
 			// consume prev txn id for not to check and wait prev transaction finished
 			if j.progress.PrevTxnId != -1 {
@@ -4883,6 +4888,41 @@ func (j *Job) checkIntactBeforeGapResync() error {
 	return xerror.Errorf(xerror.Normal,
 		"src table %s has been recreated (id %d changed), skip auto full sync; recreate the job or force_fullsync manually",
 		j.Src.Table, j.Src.TableId)
+}
+
+// newGapResyncSnapshot triggers a full sync for a binlog gap, and arms the
+// table id guard with the verified src table id, so that the later snapshot
+// identity can be checked against it (see checkGapResyncTableId).
+func (j *Job) newGapResyncSnapshot(commitSeq int64, reason string) error {
+	if err := j.NewSnapshot(commitSeq, reason); err != nil {
+		return err
+	}
+	if j.SyncType == TableSync {
+		j.progress.GapResyncTableId = j.Src.TableId
+		j.progress.Persist()
+	}
+	return nil
+}
+
+// checkGapResyncTableId guards the full sync triggered by binlog gap resync:
+// the snapshot must be taken from the same table as the gap resync expected.
+// A full sync snapshots the source by table name, if the table is renamed and
+// the name is reused by another table after the gap resync is triggered, the
+// snapshot would be taken from the wrong table. Return an explicit error in
+// that case, never mutate Src.TableId. The guard is disarmed once the
+// snapshot identity is verified.
+func (j *Job) checkGapResyncTableId(backupObjectId int64) error {
+	expected := j.progress.GapResyncTableId
+	if expected == 0 {
+		return nil
+	}
+	if backupObjectId != expected {
+		return xerror.Errorf(xerror.Normal,
+			"snapshot table %s id %d does not match the gap resync expected table id %d, the table may be renamed or recreated after the gap resync is triggered, refuse to continue; recreate the job or force_fullsync manually",
+			j.Src.Table, backupObjectId, expected)
+	}
+	j.progress.GapResyncTableId = 0
+	return nil
 }
 
 func (j *Job) GetJobProgress() *JobProgress {
