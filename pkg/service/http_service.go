@@ -1209,8 +1209,17 @@ func (s *HttpService) invalidateBackendsCacheHandler(w http.ResponseWriter, r *h
 	var res *result
 	defer func() { writeJson(w, res) }()
 
+	if r.Method != http.MethodPost {
+		methodErr := fmt.Errorf("method %s not allowed", r.Method)
+		w.Header().Set("Allow", http.MethodPost)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		res = &result{defaultResult: newErrorResult(methodErr.Error())}
+		return
+	}
+
 	var request *CcrCommonRequest
 	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 	decodeErr := decoder.Decode(&request)
 	if errors.Is(decodeErr, io.EOF) {
 		// Empty body means invalidate all jobs on this syncer.
@@ -1230,6 +1239,7 @@ func (s *HttpService) invalidateBackendsCacheHandler(w http.ResponseWriter, r *h
 	}
 	if decodeErr != nil {
 		log.Warnf("invalidate backends cache failed to decode request: %+v", decodeErr)
+		w.WriteHeader(http.StatusBadRequest)
 		res = &result{defaultResult: newErrorResult(decodeErr.Error())}
 		return
 	}
