@@ -19,8 +19,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"runtime"
@@ -1207,9 +1209,30 @@ func (s *HttpService) invalidateBackendsCacheHandler(w http.ResponseWriter, r *h
 	var res *result
 	defer func() { writeJson(w, res) }()
 
-	var request CcrCommonRequest
-	// ignore decode error for empty body, treat as invalidate all
-	_ = json.NewDecoder(r.Body).Decode(&request)
+	var request *CcrCommonRequest
+	decoder := json.NewDecoder(r.Body)
+	decodeErr := decoder.Decode(&request)
+	if errors.Is(decodeErr, io.EOF) {
+		// Empty body means invalidate all jobs on this syncer.
+		request = &CcrCommonRequest{}
+		decodeErr = nil
+	} else if decodeErr == nil && request == nil {
+		decodeErr = errors.New("request body must be a JSON object")
+	} else if decodeErr == nil {
+		// Reject trailing data or a second JSON value instead of treating the
+		// successfully decoded prefix as an invalidate-all request.
+		var extra any
+		if err := decoder.Decode(&extra); err == nil {
+			decodeErr = errors.New("request body must contain a single JSON object")
+		} else if !errors.Is(err, io.EOF) {
+			decodeErr = err
+		}
+	}
+	if decodeErr != nil {
+		log.Warnf("invalidate backends cache failed to decode request: %+v", decodeErr)
+		res = &result{defaultResult: newErrorResult(decodeErr.Error())}
+		return
+	}
 
 	count, err := s.jobManager.InvalidateBackendsCache(request.Name)
 	if err != nil {
