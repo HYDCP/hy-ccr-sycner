@@ -1,5 +1,23 @@
 # 更新日志
 
+# hy-ccr-3.0.6-rc08
+
+基于 `3.0.6-rc07-node-info-add`，包含 HYDCP/hy-ccr-sycner#2 和 #1；保留 `/node_info`，不包含 `/migrate`、`/notify_update`。
+
+### Fix
+
+- 检查 FE GetBinlogLag 返回状态，避免非 OK 响应被显示为正常的 `lag=0`；`/get_lag` 返回错误 envelope，任务列表的不可用 lag 显示为 `-1`（HYDCP/hy-ccr-sycner#1）。
+- lag 不可用时保留已有 Prometheus lag gauge，同步状态 gauge 仍从持久化 progress 刷新；首次采集也能创建状态指标（HYDCP/hy-ccr-sycner#1）。
+- 为 BE 元数据缓存增加 60 秒 TTL 和主动失效能力，重建 BE 映射，并简化 replication_num 校验（上游 selectdb/ccr-syncer#651，经 HYDCP/hy-ccr-sycner#2 移植）。
+- 缓存失效接口仅接受 POST；拒绝畸形 JSON、null、未知字段和尾随内容，分别返回 HTTP 400/405，避免误触发全量缓存失效（HYDCP/hy-ccr-sycner#2）。
+
+### Compatibility / Known limitations
+
+- `/get_lag` 的 HTTP 状态仍为 200，调用方必须检查 `success` / `error_msg`；保留的 lag gauge 不代表数据仍新鲜，监控应结合错误/可用性信号。
+- 自动 gap 全量恢复不在本版范围内；`BINLOG_TOO_OLD_COMMIT_SEQ` 仍可能使同步循环停滞，但 lag 查询会暴露异常。
+- 缓存刷新与主动失效的竞态、多 syncer 指定 job 时的 owner 自动路由保留为后续工作。指定 job 的失效请求应发送到所属节点；空 body 只失效当前节点管理的 job。
+- 使用单个 Git tag `hy-ccr-3.0.6-rc08`。构建、验证和升级说明见 [发布说明](doc/releases/hy-ccr-3.0.6-rc08.md)。
+
 # 3.0.6-rc06
 
 ### Fix

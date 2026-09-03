@@ -24,7 +24,63 @@ import (
 	"testing"
 
 	"github.com/selectdb/ccr_syncer/pkg/ccr"
+	"github.com/selectdb/ccr_syncer/pkg/version"
+	"github.com/stretchr/testify/require"
 )
+
+func TestReleaseNodeInfoWithoutMigration(t *testing.T) {
+	service := NewHttpServer("127.0.0.1", 9190, nil, ccr.NewJobManager(nil, nil, "test-syncer"))
+	service.RegisterHandlers()
+	response := httptest.NewRecorder()
+	service.mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/node_info", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var node struct {
+		Success       bool   `json:"success"`
+		Version       string `json:"version"`
+		Host          string `json:"host"`
+		Port          int    `json:"port"`
+		UptimeSeconds int64  `json:"uptime_seconds"`
+		Config        struct {
+			DbType string `json:"db_type"`
+		} `json:"config"`
+		Resources struct {
+			GoroutineCount int `json:"goroutine_count"`
+		} `json:"resources"`
+		Tasks struct {
+			Total   int `json:"total"`
+			Running int `json:"running"`
+			Paused  int `json:"paused"`
+		} `json:"tasks"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&node))
+	require.True(t, node.Success)
+	require.Equal(t, version.GetVersion(), node.Version)
+	require.Equal(t, "127.0.0.1", node.Host)
+	require.Equal(t, 9190, node.Port)
+	require.GreaterOrEqual(t, node.UptimeSeconds, int64(0))
+	require.NotEmpty(t, node.Config.DbType)
+	require.Positive(t, node.Resources.GoroutineCount)
+	require.Zero(t, node.Tasks.Total)
+	require.Zero(t, node.Tasks.Running)
+	require.Zero(t, node.Tasks.Paused)
+
+	response = httptest.NewRecorder()
+	service.mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/invalidate_backends_cache", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var invalidation struct {
+		Success          bool `json:"success"`
+		InvalidatedCount int  `json:"invalidated_count"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&invalidation))
+	require.True(t, invalidation.Success)
+	require.Zero(t, invalidation.InvalidatedCount)
+
+	for _, path := range []string{"/migrate", "/notify_update"} {
+		response = httptest.NewRecorder()
+		service.mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)))
+		require.Equal(t, http.StatusNotFound, response.Code, path)
+	}
+}
 
 func TestInvalidateBackendsCacheHandlerRequestBody(t *testing.T) {
 	tests := []struct {

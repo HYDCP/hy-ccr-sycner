@@ -57,7 +57,7 @@ fmt:
 .PHONY: test
 ## test : Run test
 test:
-	$(V)go test $(shell go list ./... | grep -v github.com/selectdb/ccr_syncer/cmd | grep -v github.com/selectdb/ccr_syncer/pkg/rpc/kitex_gen/)
+	$(V)go test $(shell go list ./... | grep -v github.com/selectdb/ccr_syncer/cmd | grep -v github.com/selectdb/ccr_syncer/pkg/rpc/kitex_gen/) ./cmd/ccr_syncer
 
 .PHONY: help
 ## help : Print help message
@@ -161,4 +161,3 @@ tarball: default
 	$(V)cp -r doc/* tarball/ccr-syncer-$(tarball_suffix)/doc/
 	$(V)cd tarball/ && tar cfJ ccr-syncer-$(tarball_suffix).tar.xz ccr-syncer-$(tarball_suffix)
 	$(V)echo archive: tarball/ccr-syncer-$(tarball_suffix).tar.xz
-
