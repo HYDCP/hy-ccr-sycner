@@ -19,8 +19,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"runtime"
@@ -1193,6 +1195,66 @@ func (s *HttpService) nodeInfoHandler(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, result)
 }
 
+// invalidateBackendsCacheHandler invalidates backends cache for scaling scenarios.
+// Request body is optional:
+//   - empty or {"name": ""} -> invalidate all jobs
+//   - {"name": "job1"}      -> invalidate specific job only
+func (s *HttpService) invalidateBackendsCacheHandler(w http.ResponseWriter, r *http.Request) {
+	log.Info("invalidate backends cache")
+
+	type result struct {
+		*defaultResult
+		InvalidatedCount int `json:"invalidated_count"`
+	}
+	var res *result
+	defer func() { writeJson(w, res) }()
+
+	if r.Method != http.MethodPost {
+		methodErr := fmt.Errorf("method %s not allowed", r.Method)
+		w.Header().Set("Allow", http.MethodPost)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		res = &result{defaultResult: newErrorResult(methodErr.Error())}
+		return
+	}
+
+	var request *CcrCommonRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&request)
+	if errors.Is(decodeErr, io.EOF) {
+		// Empty body means invalidate all jobs on this syncer.
+		request = &CcrCommonRequest{}
+		decodeErr = nil
+	} else if decodeErr == nil && request == nil {
+		decodeErr = errors.New("request body must be a JSON object")
+	} else if decodeErr == nil {
+		// Reject trailing data or a second JSON value instead of treating the
+		// successfully decoded prefix as an invalidate-all request.
+		var extra any
+		if err := decoder.Decode(&extra); err == nil {
+			decodeErr = errors.New("request body must contain a single JSON object")
+		} else if !errors.Is(err, io.EOF) {
+			decodeErr = err
+		}
+	}
+	if decodeErr != nil {
+		log.Warnf("invalidate backends cache failed to decode request: %+v", decodeErr)
+		w.WriteHeader(http.StatusBadRequest)
+		res = &result{defaultResult: newErrorResult(decodeErr.Error())}
+		return
+	}
+
+	count, err := s.jobManager.InvalidateBackendsCache(request.Name)
+	if err != nil {
+		log.Warnf("invalidate backends cache failed: %+v", err)
+		res = &result{defaultResult: newErrorResult(err.Error())}
+		return
+	}
+
+	log.Infof("invalidated backends cache, job: %q, count: %d", request.Name, count)
+	res = &result{defaultResult: newSuccessResult(), InvalidatedCount: count}
+}
+
 func (s *HttpService) RegisterHandlers() {
 	s.mux.HandleFunc("/version", s.versionHandler)
 	s.mux.HandleFunc("/create_ccr", s.createHandler)
@@ -1210,6 +1272,7 @@ func (s *HttpService) RegisterHandlers() {
 	s.mux.HandleFunc("/update_host_mapping", s.updateHostMappingHandler)
 	s.mux.HandleFunc("/job_skip_binlog", s.skipBinlogHandler)
 	s.mux.HandleFunc("/failpoint", s.failpointHandler)
+	s.mux.HandleFunc("/invalidate_backends_cache", s.invalidateBackendsCacheHandler)
 	s.mux.Handle("/metrics", xmetrics.GetHttpHandler())
 	s.mux.HandleFunc("/sync", s.syncHandler)
 	s.mux.HandleFunc("/view", s.showJobStateHandler)
