@@ -22,7 +22,9 @@ import (
 
 	"github.com/selectdb/ccr_syncer/pkg/ccr"
 	"github.com/selectdb/ccr_syncer/pkg/ccr/base"
+	tstatus "github.com/selectdb/ccr_syncer/pkg/rpc/kitex_gen/status"
 	"github.com/selectdb/ccr_syncer/pkg/storage"
+	utils "github.com/selectdb/ccr_syncer/pkg/utils"
 	"github.com/selectdb/ccr_syncer/pkg/xerror"
 	"github.com/selectdb/ccr_syncer/pkg/xmetrics"
 	log "github.com/sirupsen/logrus"
@@ -91,6 +93,9 @@ func (c *JobCollector) updateMetrics() error {
 			runningJobNum++
 		}
 
+		// Sync state comes from persisted progress and does not depend on the lag RPC.
+		xmetrics.UpdateJobSyncState(jobName, int(jobProgress.SyncState), jobProgress.SubSyncState.State)
+
 		srcSpec := &jobInfo.Src
 		commitSeq := jobProgress.CommitSeq
 		lag, interval, err := c.getJobLag(srcSpec, commitSeq)
@@ -100,7 +105,6 @@ func (c *JobCollector) updateMetrics() error {
 		}
 
 		xmetrics.UpdateJobLag(jobName, lag, interval)
-		xmetrics.UpdateJobSyncState(jobName, int(jobProgress.SyncState), jobProgress.SubSyncState.State)
 	}
 	xmetrics.UpdateJobNum(runningJobNum)
 
@@ -146,6 +150,11 @@ func (c *JobCollector) getJobLag(spec *base.Spec, commitSeq int64) (int64, float
 	resp, err := feRpc.GetBinlogLag(spec, commitSeq)
 	if err != nil {
 		return 0, 0, xerror.Wrapf(err, xerror.Normal, "rpc get bin log failed")
+	}
+
+	if status := resp.GetStatus(); status.GetStatusCode() != tstatus.TStatusCode_OK {
+		return 0, 0, xerror.Errorf(xerror.Normal, "get binlog lag failed, status: %s",
+			utils.FirstOr(status.GetErrorMsgs(), status.GetStatusCode().String()))
 	}
 
 	lag := resp.GetLag()
