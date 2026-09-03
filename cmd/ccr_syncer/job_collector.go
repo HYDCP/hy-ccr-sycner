@@ -93,6 +93,9 @@ func (c *JobCollector) updateMetrics() error {
 			runningJobNum++
 		}
 
+		// Sync state comes from persisted progress and does not depend on the lag RPC.
+		xmetrics.UpdateJobSyncState(jobName, int(jobProgress.SyncState), jobProgress.SubSyncState.State)
+
 		srcSpec := &jobInfo.Src
 		commitSeq := jobProgress.CommitSeq
 		lag, interval, err := c.getJobLag(srcSpec, commitSeq)
@@ -102,7 +105,6 @@ func (c *JobCollector) updateMetrics() error {
 		}
 
 		xmetrics.UpdateJobLag(jobName, lag, interval)
-		xmetrics.UpdateJobSyncState(jobName, int(jobProgress.SyncState), jobProgress.SubSyncState.State)
 	}
 	xmetrics.UpdateJobNum(runningJobNum)
 
