@@ -432,43 +432,6 @@ func (s *MysqlDB) RebalanceLoadFromDeadSyncers(syncers []string) error {
 	return nil
 }
 
-func (s *MysqlDB) UpdateJobBelong(jobName string, targetHost string) error {
-	result, err := s.db.Exec(fmt.Sprintf("UPDATE jobs SET belong_to = '%s' WHERE job_name = '%s'", targetHost, jobName))
-	if err != nil {
-		return xerror.Wrapf(err, xerror.DB, "mysql: update job belong_to failed, name: %s", jobName)
-	}
-	rowNum, err := result.RowsAffected()
-	if err != nil {
-		return xerror.Wrapf(err, xerror.DB, "mysql: update job belong_to get affected rows failed, name: %s", jobName)
-	}
-	if rowNum == 0 {
-		return ErrJobNotExists
-	}
-	return nil
-}
-
-func (s *MysqlDB) InvalidateSyncerStamp(hostInfo string) error {
-	result, err := s.db.Exec(fmt.Sprintf("UPDATE syncers SET timestamp = 0 WHERE host_info = '%s'", hostInfo))
-	if err != nil {
-		return xerror.Wrapf(err, xerror.DB, "mysql: invalidate syncer stamp failed, host: %s", hostInfo)
-	}
-	if rowNum, err := result.RowsAffected(); err != nil {
-		return xerror.Wrapf(err, xerror.DB, "mysql: invalidate syncer stamp get affected rows failed, host: %s", hostInfo)
-	} else if rowNum == 0 {
-		return xerror.Errorf(xerror.DB, "mysql: syncer not found, host: %s", hostInfo)
-	}
-	return nil
-}
-
-func (s *MysqlDB) IsSyncerAlive(hostInfo string, timeout time.Duration) (bool, error) {
-	var timestamp int64
-	err := s.db.QueryRow(fmt.Sprintf("SELECT timestamp FROM syncers WHERE host_info = '%s'", hostInfo)).Scan(&timestamp)
-	if err != nil {
-		return false, xerror.Wrapf(err, xerror.DB, "mysql: check syncer alive failed, host: %s", hostInfo)
-	}
-	return time.Since(time.Unix(0, timestamp)) < timeout, nil
-}
-
 func (s *MysqlDB) GetAllData() (map[string][]string, error) {
 	ans := make(map[string][]string)
 
