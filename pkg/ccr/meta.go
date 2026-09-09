@@ -492,6 +492,12 @@ func (m *Meta) GetPartitionIdByRange(tableId int64, partitionRange string) (int6
 	return 0, xerror.Errorf(xerror.Meta, "partition range %s not found", partitionRange)
 }
 
+// UpdateBackends refreshes the backends cache from FE.
+//
+// A successful query that returns no rows is reported as an error and leaves the
+// previous cache in place, so callers must not read the cache expecting it to be
+// empty after this returns. A cluster whose backends are all gone therefore keeps
+// its last known list until FE reports at least one backend again.
 func (m *Meta) UpdateBackends() error {
 	// mysql> show backends;
 	// +-----------+-----------------+-----------+---------------+--------+----------+----------+---------------------+---------------------+-------+----------------------+-----------------------+-----------+------------------+---------------+---------------+---------+----------------+--------------------+--------------------------+--------+------------------------------+-------------------------------------------------------------------------------------------------------------------------------+-------------------------+----------+
@@ -731,6 +737,10 @@ func (m *Meta) GetBackendMap() (map[int64]*base.Backend, error) {
 
 	// Return a snapshot: the cached map is replaced on every refresh, so handing
 	// out the internal map would let callers keep or mutate cache state.
+	//
+	// The copy is shallow: unlike GetBackends, which copies each base.Backend, the
+	// returned map shares the cached pointers, so callers must treat the entries as
+	// read-only.
 	backends := make(map[int64]*base.Backend, len(m.Backends))
 	for id, backend := range m.Backends {
 		backends[id] = backend
