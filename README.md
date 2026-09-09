@@ -2,6 +2,15 @@
 
 CCR（Cross Cluster Replication）也就是跨集群数据复制，能够在库/表级别将源集群的数据变更同步到目标集群，可用于提升在线服务的数据可用性、隔离在离线负载、建设两地三中心等。
 
+## 发布版本
+
+HZ 生产环境使用的是基于 `branch-3.0` 的 **3.0.6 线**，与本分支（`dev`，跟随上游 4.0.x）是两套历史。3.0.6 线的发布说明和 CHANGELOG 维护在对应的发布分支上，不复制到这里：
+
+- 分支：[`release/3.0.6-rc08.1`](https://github.com/HYDCP/hy-ccr-sycner/tree/release/3.0.6-rc08.1)，发布说明在该分支的 `doc/releases/`
+- 版本、产物、SHA256 和验证结论以 [GitHub Releases](https://github.com/HYDCP/hy-ccr-sycner/releases) 为准
+
+修复要进 3.0.x 的发布，合进 `dev` 是不够的，必须另开 base 指向发布分支的 backport PR。
+
 ## 原理
 ### 名词解释
 
