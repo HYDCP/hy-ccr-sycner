@@ -1,5 +1,22 @@
 # 更新日志
 
+# hy-ccr-3.0.6-rc08.1
+
+`hy-ccr-3.0.6-rc08` 的补丁版本，仅包含 HYDCP/hy-ccr-sycner#7（dev 上 #6 的 backport）。不移动 `hy-ccr-3.0.6-rc08` tag。
+
+### Fix
+
+- 原子替换 BE 缓存：`UpdateBackends` 原先先赋新 map 再逐条填充，而 `GetBackendId` 读 `BackendHostPort2IdMap` 不持锁，填充窗口内读者会触发 `concurrent map read and map write`（fatal，无法 recover）。现在两个 map 在锁外构建后一次性替换，读路径统一持锁（HYDCP/hy-ccr-sycner#7）。
+- FE 返回空 BE 列表时不再清空缓存：原先会导致缓存永远无效（每次调用都打 FE）、建 job 报 `replication N exceeds available BE 0`、restore 可能拿到不完整的 BE network map。现在按刷新失败上报并保留上一轮缓存（HYDCP/hy-ccr-sycner#7）。
+- `GetBackendMap` 返回快照而非内部 map，避免调用方持有会被下次刷新替换的缓存状态（HYDCP/hy-ccr-sycner#7）。
+
+### Compatibility / Known limitations
+
+- `UpdateBackends` 在 FE 返回空列表时返回错误，调用方会把错误上抛；BE 全量下线的集群会保留最后一次已知列表，直到 FE 再次返回至少一个 BE。
+- `GetBackendMap` 的快照是浅拷贝，`*base.Backend` 指针仍与缓存共享，调用方需按只读对待。
+- TTL、失效语义和 `/invalidate_backends_cache` 行为不变；rc08 的已知限制全部继续适用。
+- 构建必须用 Go 1.20，更高版本编译失败（`choleraehyq/pid` 的 arm64 汇编）。详见 [发布说明](doc/releases/hy-ccr-3.0.6-rc08.1.md)。
+
 # hy-ccr-3.0.6-rc08
 
 基于 `3.0.6-rc07-node-info-add`，包含 HYDCP/hy-ccr-sycner#2 和 #1；保留 `/node_info`，不包含 `/migrate`、`/notify_update`。
