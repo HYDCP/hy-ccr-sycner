@@ -42,7 +42,9 @@ git diff --check
 
 本机 CGO 编译使用 `CGO_CFLAGS='-O2 -g -Wno-nullability-completeness'` 处理本机 C 头文件告警，仅作用于验证命令，未修改全局环境或仓库依赖。Makefile 的 `uname -i` 在 macOS 上有已有兼容性警告，不影响本次测试退出状态。
 
-尚未执行真实 Doris/CCR 双集群测试，尚未构建或认证 Linux x64/ARM64 安装包。上述单元/路由测试不替代集群升级验证。
+打 tag 时未执行真实 Doris/CCR 双集群测试，也未构建 Linux x64/ARM64 安装包。上述单元/路由测试不替代集群升级验证。
+
+> 2026-09-09 补记：rc08 的功能面已在 [hy-ccr-3.0.6-rc08.1](hy-ccr-3.0.6-rc08.1.md) 上完成真实双集群回归，rc08 本身也已补发 [GitHub Release](https://github.com/HYDCP/hy-ccr-sycner/releases/tag/hy-ccr-3.0.6-rc08)（含 Linux x64 tarball 与 SHA256），建议直接使用 rc08.1。验证状态与产物状态以 Release 页面为准，本文档不再跟踪这类时点信息。
 
 发布二进制时，从该 tag 的干净检出构建，使用 Makefile 注入版本信息，不要用不带版本注入参数的裸 `go build` 产物替代：
 
