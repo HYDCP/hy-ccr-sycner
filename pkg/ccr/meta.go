@@ -492,6 +492,12 @@ func (m *Meta) GetPartitionIdByRange(tableId int64, partitionRange string) (int6
 	return 0, xerror.Errorf(xerror.Meta, "partition range %s not found", partitionRange)
 }
 
+// UpdateBackends refreshes the backends cache from FE.
+//
+// A successful query that returns no rows is reported as an error and leaves the
+// previous cache in place, so callers must not read the cache expecting it to be
+// empty after this returns. A cluster whose backends are all gone therefore keeps
+// its last known list until FE reports at least one backend again.
 func (m *Meta) UpdateBackends() error {
 	// mysql> show backends;
 	// +-----------+-----------------+-----------+---------------+--------+----------+----------+---------------------+---------------------+-------+----------------------+-----------------------+-----------+------------------+---------------+---------------+---------+----------------+--------------------+--------------------------+--------+------------------------------+-------------------------------------------------------------------------------------------------------------------------------+-------------------------+----------+
@@ -554,22 +560,36 @@ func (m *Meta) UpdateBackends() error {
 		return xerror.Wrap(err, xerror.Normal, query)
 	}
 
-	// Update cache with lock
+	return m.replaceBackendsCache(backends, query)
+}
+
+// replaceBackendsCache swaps in a freshly fetched backend list. The new maps are
+// built before the lock is taken and then assigned in one step, so readers never
+// observe a map that is still being filled in.
+//
+// An empty result is treated as a failed refresh: keeping the previous entries is
+// safer than reporting a cluster with no backends, which would fail job creation
+// and hand an incomplete network map to restore.
+func (m *Meta) replaceBackendsCache(backends []*base.Backend, query string) error {
+	if len(backends) == 0 {
+		return xerror.Errorf(xerror.Normal, "no backends returned by FE, keep the previous backends cache: %s", query)
+	}
+
+	newBackends := make(map[int64]*base.Backend, len(backends))
+	newHostPort2Id := make(map[string]int64, len(backends))
+	for _, backend := range backends {
+		newBackends[backend.Id] = backend
+
+		hostPort := fmtHostPort(backend.Host, backend.BePort)
+		newHostPort2Id[hostPort] = backend.Id
+	}
+
 	m.backendsLock.Lock()
 	defer m.backendsLock.Unlock()
 
 	oldCount := len(m.Backends)
-
-	// Clear and rebuild backends map
-	m.Backends = make(map[int64]*base.Backend)
-	m.BackendHostPort2IdMap = make(map[string]int64)
-
-	for _, backend := range backends {
-		m.Backends[backend.Id] = backend
-
-		hostPort := fmtHostPort(backend.Host, backend.BePort)
-		m.BackendHostPort2IdMap[hostPort] = backend.Id
-	}
+	m.Backends = newBackends
+	m.BackendHostPort2IdMap = newHostPort2Id
 
 	// update cache metadata
 	m.backendsLastUpdate = time.Now()
@@ -714,7 +734,18 @@ func (m *Meta) GetBackendMap() (map[int64]*base.Backend, error) {
 
 	m.backendsLock.RLock()
 	defer m.backendsLock.RUnlock()
-	return m.Backends, nil
+
+	// Return a snapshot: the cached map is replaced on every refresh, so handing
+	// out the internal map would let callers keep or mutate cache state.
+	//
+	// The copy is shallow: unlike GetBackends, which copies each base.Backend, the
+	// returned map shares the cached pointers, so callers must treat the entries as
+	// read-only.
+	backends := make(map[int64]*base.Backend, len(m.Backends))
+	for id, backend := range m.Backends {
+		backends[id] = backend
+	}
+	return backends, nil
 }
 
 func (m *Meta) GetBackendId(host string, portStr string) (int64, error) {
@@ -724,17 +755,27 @@ func (m *Meta) GetBackendId(host string, portStr string) (int64, error) {
 		return 0, err
 	}
 	hostPort := fmtHostPort(host, uint16(port))
-	if backendId, ok := m.BackendHostPort2IdMap[hostPort]; ok {
+	if backendId, ok := m.lookupBackendId(hostPort); ok {
 		return backendId, nil
 	}
 	if err := m.UpdateBackends(); err != nil {
 		return 0, err
 	}
-	if backendId, ok := m.BackendHostPort2IdMap[hostPort]; ok {
+	if backendId, ok := m.lookupBackendId(hostPort); ok {
 		return backendId, nil
 	}
 
 	return 0, xerror.Errorf(xerror.Normal, "hostPort: %s not found", hostPort)
+}
+
+// lookupBackendId reads the host:port index under the cache lock. The lock must
+// not be held while refreshing, because UpdateBackends takes it for writing.
+func (m *Meta) lookupBackendId(hostPort string) (int64, bool) {
+	m.backendsLock.RLock()
+	defer m.backendsLock.RUnlock()
+
+	backendId, ok := m.BackendHostPort2IdMap[hostPort]
+	return backendId, ok
 }
 
 // Update indexes by table and partition, return xerror.Meta category if no such table or partition exists.
