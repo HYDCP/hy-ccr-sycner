@@ -30,6 +30,7 @@ import (
 	"github.com/selectdb/ccr_syncer/pkg/rpc"
 	utils "github.com/selectdb/ccr_syncer/pkg/utils"
 	"github.com/selectdb/ccr_syncer/pkg/xerror"
+	"github.com/selectdb/ccr_syncer/pkg/xmetrics"
 
 	bestruct "github.com/selectdb/ccr_syncer/pkg/rpc/kitex_gen/backendservice"
 	festruct "github.com/selectdb/ccr_syncer/pkg/rpc/kitex_gen/frontendservice"
@@ -140,6 +141,9 @@ type tabletIngestBinlogHandler struct {
 
 	cancel atomic.Bool
 	wg     sync.WaitGroup
+
+	// singleReplicaIngestFunc is injectable for testing; defaults to handleSingleReplica.
+	singleReplicaIngestFunc func(context.Context, []*ReplicaMeta) bool
 }
 
 // handle Replica
@@ -273,6 +277,17 @@ func (h *tabletIngestBinlogHandler) handle(ctx context.Context) {
 		return
 	}
 
+	// Try single replica ingest binlog if enabled and dest tablet has multiple replicas
+	if h.trySingleReplicaIngest(ctx, srcReplicas) {
+		return
+	}
+
+	if h.cancel.Load() {
+		log.Infof("txn %d tablet %d job canceled, skip multi-replica ingest",
+			h.ingestJob.txnId, h.destTablet.Id)
+		return
+	}
+
 	srcReplicaIndex := 0
 	h.destTablet.ReplicaMetas.Scan(func(destReplicaId int64, destReplica *ReplicaMeta) bool {
 		// round robbin
@@ -288,6 +303,266 @@ func (h *tabletIngestBinlogHandler) handle(ctx context.Context) {
 		commitInfos := h.SubTxnToCommitInfos()[h.stid]
 		h.ingestJob.appendSubTxnCommitInfos(h.stid, h.destTableId, commitInfos...)
 	}
+}
+
+func (h *tabletIngestBinlogHandler) trySingleReplicaIngest(ctx context.Context, srcReplicas []*ReplicaMeta) bool {
+	if !featureSingleReplicaIngestBinlog {
+		log.Tracef("txn %d tablet %d single replica ingest is disabled",
+			h.ingestJob.txnId, h.destTablet.Id)
+		return false
+	}
+	if h.ingestJob.ccrJob.singleReplicaFallback.Load() {
+		log.Tracef("txn %d tablet %d destination cluster does not support single replica ingest, skip",
+			h.ingestJob.txnId, h.destTablet.Id)
+		return false
+	}
+	if h.destTablet.ReplicaMetas.Len() <= 1 {
+		log.Tracef("txn %d tablet %d has only %d replica(s), skip single replica ingest",
+			h.ingestJob.txnId, h.destTablet.Id, h.destTablet.ReplicaMetas.Len())
+		return false
+	}
+
+	singleReplicaIngest := h.singleReplicaIngestFunc
+	if singleReplicaIngest == nil {
+		singleReplicaIngest = h.handleSingleReplica
+	}
+
+	for i := 0; i < flagSingleReplicaIngestMaxRetries; i++ {
+		if h.cancel.Load() {
+			log.Infof("txn %d tablet %d job canceled, skip single replica ingest",
+				h.ingestJob.txnId, h.destTablet.Id)
+			return false
+		}
+
+		if singleReplicaIngest(ctx, srcReplicas) {
+			log.Tracef("txn %d tablet %d single replica ingest succeeded",
+				h.ingestJob.txnId, h.destTablet.Id)
+			xmetrics.RecordSingleReplicaIngestSuccess(h.ingestJob.ccrJob.Name)
+			return true
+		}
+
+		log.Warnf("txn %d tablet %d single replica ingest attempt %d/%d failed",
+			h.ingestJob.txnId, h.destTablet.Id, i+1, flagSingleReplicaIngestMaxRetries)
+		if i < flagSingleReplicaIngestMaxRetries-1 {
+			xmetrics.RecordSingleReplicaIngestRetry(h.ingestJob.ccrJob.Name)
+			select {
+			case <-ctx.Done():
+				log.Infof("txn %d tablet %d single replica ingest retry canceled",
+					h.ingestJob.txnId, h.destTablet.Id)
+				return false
+			case <-time.After(flagSingleReplicaIngestRetryInterval):
+			}
+		}
+	}
+
+	log.Warnf("txn %d tablet %d single replica ingest failed after %d retries, fallback to multi-replica path",
+		h.ingestJob.txnId, h.destTablet.Id, flagSingleReplicaIngestMaxRetries)
+	xmetrics.RecordSingleReplicaIngestFallback(h.ingestJob.ccrJob.Name)
+	return false
+}
+
+func (h *tabletIngestBinlogHandler) handleSingleReplica(ctx context.Context, srcReplicas []*ReplicaMeta) bool {
+	j := h.ingestJob
+	destStid := h.stid
+	binlogVersion := h.binlogVersion
+	srcTablet := h.srcTablet
+	destPartitionId := h.destPartitionId
+
+	// Collect dest replicas
+	destReplicas := make([]*ReplicaMeta, 0, h.destTablet.ReplicaMetas.Len())
+	h.destTablet.ReplicaMetas.Scan(func(destReplicaId int64, destReplica *ReplicaMeta) bool {
+		destReplicas = append(destReplicas, destReplica)
+		return true
+	})
+	if len(destReplicas) <= 1 {
+		return false
+	}
+
+	// Pick leader by tablet id hash to balance leader hotspot
+	leaderIdx := int(h.destTablet.Id) % len(destReplicas)
+	leaderReplica := destReplicas[leaderIdx]
+	leaderBackend := j.GetDestBackend(leaderReplica.BackendId)
+	if leaderBackend == nil {
+		log.Warnf("txn %d tablet %d leader backend %d not found",
+			j.txnId, h.destTablet.Id, leaderReplica.BackendId)
+		return false
+	}
+
+	leaderRpc, err := j.factory.NewBeRpc(leaderBackend)
+	if err != nil {
+		log.Warnf("txn %d tablet %d failed to create leader be rpc: %v",
+			j.txnId, h.destTablet.Id, err)
+		return false
+	}
+
+	// Round robin source backend for leader download
+	srcReplica := srcReplicas[int(h.destTablet.Id)%len(srcReplicas)]
+	srcBackend := j.GetSrcBackend(srcReplica.BackendId)
+	if srcBackend == nil {
+		log.Warnf("txn %d tablet %d src backend %d not found",
+			j.txnId, h.destTablet.Id, srcReplica.BackendId)
+		return false
+	}
+
+	// Build follower replicas
+	followerReplicas := make([]*bestruct.TReplicaDistributionInfo, 0, len(destReplicas)-1)
+	followerBackendIdSet := make(map[int64]struct{}, len(destReplicas)-1)
+	for i, destReplica := range destReplicas {
+		if i == leaderIdx {
+			continue
+		}
+		followerBackend := j.GetDestBackend(destReplica.BackendId)
+		if followerBackend == nil {
+			log.Warnf("txn %d tablet %d follower backend %d not found",
+				j.txnId, h.destTablet.Id, destReplica.BackendId)
+			return false
+		}
+		followerReplicas = append(followerReplicas, &bestruct.TReplicaDistributionInfo{
+			BackendId: utils.ThriftValueWrapper(destReplica.BackendId),
+			Host:      utils.ThriftValueWrapper(followerBackend.Host),
+			BePort:    utils.ThriftValueWrapper[int32](int32(followerBackend.BePort)),
+		})
+		followerBackendIdSet[destReplica.BackendId] = struct{}{}
+	}
+
+	// for txn insert
+	txnId := j.txnId
+	if destStid != 0 {
+		txnId = destStid
+	}
+
+	loadId := ttypes.NewTUniqueId()
+	loadId.SetHi(-1)
+	loadId.SetLo(-1)
+
+	req := &bestruct.TIngestBinlogRequest{
+		TxnId:                 utils.ThriftValueWrapper(txnId),
+		RemoteTabletId:        utils.ThriftValueWrapper[int64](srcTablet.Id),
+		BinlogVersion:         utils.ThriftValueWrapper(binlogVersion),
+		RemoteHost:            utils.ThriftValueWrapper(srcBackend.Host),
+		RemotePort:            utils.ThriftValueWrapper(srcBackend.GetHttpPortStr()),
+		PartitionId:           utils.ThriftValueWrapper[int64](destPartitionId),
+		LocalTabletId:         utils.ThriftValueWrapper[int64](leaderReplica.TabletId),
+		LoadId:                loadId,
+		SingleReplicaDownload: utils.ThriftValueWrapper(true),
+		FollowerReplicas:      followerReplicas,
+	}
+
+	// Account for both the leader download and the fan-out work to followers.
+	// Acquire windows for all destination backends in a globally sorted order to
+	// avoid ABBA deadlocks between different tablets whose leader replicas rotate.
+	backendIds := make([]int64, 0, 1+len(followerReplicas))
+	backendIds = append(backendIds, leaderBackend.Id)
+	for _, followerReplica := range followerReplicas {
+		backendIds = append(backendIds, followerReplica.GetBackendId())
+	}
+	releaseWindows := j.ccrJob.concurrencyManager.AcquireAll(backendIds)
+	defer releaseWindows()
+
+	var options []rpc.BeRpcOption
+	if h.deltaRows > 0 {
+		// estimate downloading + distribution time according to delta rows
+		estimatedBytes := h.deltaRows * 1024         // each row 1KB
+		estimatedDownloadSpeed := int64(1024 * 1024) // a slow download speed 1MB/s
+		estimatedElapsed := estimatedBytes / estimatedDownloadSpeed
+		estimatedDuration := time.Duration(estimatedElapsed) * time.Second
+		if estimatedDuration > time.Hour {
+			estimatedDuration = time.Hour
+		}
+		// double the timeout to cover both download and distribution
+		estimatedDuration *= 2
+		if estimatedDuration > rpc.RpcTimeout {
+			options = append(options, rpc.WithBeRpcTimeout(estimatedDuration))
+		}
+	}
+
+	resp, err := leaderRpc.IngestBinlog(ctx, req, options...)
+	if err != nil {
+		log.Warnf("txn %d tablet %d leader ingest binlog rpc failed: %v",
+			j.txnId, h.destTablet.Id, err)
+		return false
+	}
+
+	log.Tracef("txn %d tablet %d single replica ingest resp: %v", j.txnId, h.destTablet.Id, resp)
+	if !resp.IsSetStatus() {
+		log.Warnf("txn %d tablet %d leader ingest resp status not set", j.txnId, h.destTablet.Id)
+		return false
+	}
+	if resp.Status.StatusCode != tstatus.TStatusCode_OK {
+		log.Warnf("txn %d tablet %d leader ingest error, status code: %v, msg: %v",
+			j.txnId, h.destTablet.Id, resp.Status.StatusCode, resp.Status.ErrorMsgs)
+		// Async ingest mode rejects single-replica ingest permanently; remember it
+		// so later tablets skip the retry loop entirely.
+		for _, msg := range resp.Status.ErrorMsgs {
+			if strings.Contains(msg, "async ingest mode") {
+				h.ingestJob.ccrJob.singleReplicaFallback.Store()
+				break
+			}
+		}
+		return false
+	}
+
+	// Old BE compatibility: if success_replica_backend_ids is not set, fallback
+	if !resp.IsSetSuccessReplicaBackendIds() {
+		log.Warnf("txn %d tablet %d leader returned no follower success info (old BE), fallback",
+			j.txnId, h.destTablet.Id)
+		h.ingestJob.ccrJob.singleReplicaFallback.Store()
+		return false
+	}
+
+	// Record per-follower metrics before mutating the set.
+	for backendId := range followerBackendIdSet {
+		xmetrics.RecordSingleReplicaIngestFollower(h.ingestJob.ccrJob.Name, backendId)
+	}
+
+	// Check all followers succeeded
+	for _, backendId := range resp.GetSuccessReplicaBackendIds() {
+		delete(followerBackendIdSet, backendId)
+	}
+	if len(followerBackendIdSet) > 0 {
+		failedBackendIds := make([]int64, 0, len(followerBackendIdSet))
+		for backendId := range followerBackendIdSet {
+			failedBackendIds = append(failedBackendIds, backendId)
+			xmetrics.RecordSingleReplicaIngestFollowerFailed(h.ingestJob.ccrJob.Name, backendId)
+		}
+		log.Warnf("txn %d tablet %d not all followers succeeded, failed: %v",
+			j.txnId, h.destTablet.Id, failedBackendIds)
+		return false
+	}
+
+	// Collect commit infos for leader and all followers
+	commitInfo := &ttypes.TTabletCommitInfo{
+		TabletId:  leaderReplica.TabletId,
+		BackendId: leaderBackend.Id,
+	}
+	h.appendCommitInfos(commitInfo)
+	if destStid != 0 {
+		h.appendSubTxnCommitInfos(destStid, h.destTableId, commitInfo)
+	}
+	for _, followerReplica := range destReplicas {
+		if followerReplica.BackendId == leaderReplica.BackendId {
+			continue
+		}
+		followerBackend := j.GetDestBackend(followerReplica.BackendId)
+		if followerBackend == nil {
+			continue
+		}
+		followerCommitInfo := &ttypes.TTabletCommitInfo{
+			TabletId:  followerReplica.TabletId,
+			BackendId: followerBackend.Id,
+		}
+		h.appendCommitInfos(followerCommitInfo)
+		if destStid != 0 {
+			h.appendSubTxnCommitInfos(destStid, h.destTableId, followerCommitInfo)
+		}
+	}
+
+	h.ingestJob.appendCommitInfos(h.CommitInfos()...)
+	if h.stid != 0 {
+		commitInfos := h.SubTxnToCommitInfos()[h.stid]
+		h.ingestJob.appendSubTxnCommitInfos(h.stid, h.destTableId, commitInfos...)
+	}
+	return true
 }
 
 type IngestContext struct {

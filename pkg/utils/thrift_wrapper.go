@@ -23,7 +23,7 @@ import (
 )
 
 type WrapperType interface {
-	~int64 | ~string | ~bool
+	~int64 | ~int32 | ~string | ~bool
 }
 
 func ThriftValueWrapper[T WrapperType](value T) *T {

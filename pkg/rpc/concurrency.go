@@ -18,6 +18,7 @@ package rpc
 
 import (
 	"flag"
+	"sort"
 	"sync"
 )
 
@@ -85,4 +86,34 @@ func (cm *ConcurrencyManager) GetWindow(id int64) *ConcurrencyWindow {
 		value, ok = cm.windows.LoadOrStore(id, window)
 	}
 	return value.(*ConcurrencyWindow)
+}
+
+// AcquireAll acquires the concurrency windows for all given backend ids in a
+// globally sorted order, deduplicating duplicate ids, and returns a function
+// that releases them in reverse order. Callers should defer the returned
+// release function. This prevents ABBA deadlocks when multiple tablets acquire
+// overlapping backend windows in different leader/follower roles.
+func (cm *ConcurrencyManager) AcquireAll(ids []int64) func() {
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+
+	windows := make([]*ConcurrencyWindow, 0, len(unique))
+	for _, id := range unique {
+		w := cm.GetWindow(id)
+		w.Acquire()
+		windows = append(windows, w)
+	}
+	return func() {
+		for i := len(windows) - 1; i >= 0; i-- {
+			windows[i].Release()
+		}
+	}
 }
