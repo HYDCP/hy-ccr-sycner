@@ -44,7 +44,14 @@ go test -race -count=1 ./pkg/ccr ./pkg/service ./cmd/ccr_syncer
 
 新增的并发用例在修复前的代码上跑 `-race` 会稳定报 DATA RACE 并失败，用来确认它确实覆盖了目标问题。
 
-尚未执行真实 Doris/CCR 双集群测试，尚未构建 Linux x64/ARM64 安装包。单元测试不替代集群升级验证。
+2026-09-09 已在 192.168.9.44 完成真实 Doris/CCR 双集群验证（Doris `apache-doris-branch-3.1-hydcp-1.2-rc02`，各 1 FE + 1 BE，syncer 以 MySQL 为元数据），全部通过，明细见 [HYDCP/hy-ccr-sycner#8](https://github.com/HYDCP/hy-ccr-sycner/issues/8)：
+
+- 主链路：建 job → 全量 → 增量 → 暂停 → 恢复 → 删除 → 同名重建。
+- 本次改动路径：`validateReplicaFail` 双向（`replication_num=1` 正常、`=2` 正确报 `exceeds available BE 1`）；`genExtraInfo` 经 BE 扩缩容 + `/invalidate_backends_cache` + force_fullsync 验证，缓存重建日志 `1 -> 2` / `2 -> 1`。
+- 空 backends 保护：DROPP 唯一 BE 后建 job 报 `no backends returned by FE`，BE 恢复后可建；保留旧缓存的语义由单测覆盖。
+- rc08 回归：`/get_lag` 故障注入、Prometheus 指标保留、`/invalidate_backends_cache` 校验矩阵、`/node_info`、迁移路由 404，全部通过。
+
+安装包：Linux x64 tarball 及 SHA256 已随 [GitHub Release](https://github.com/HYDCP/hy-ccr-sycner/releases/tag/hy-ccr-3.0.6-rc08.1) 发布（Go 1.20.12 从该 tag 干净检出构建，版本注入复核为 `hy-ccr-3.0.6-rc08.1:ee7a1e9`）。ARM64 未产出：构建机交叉工具链缺 sysroot，需在 ARM64 机器上用 Go 1.20 原生构建。
 
 发布二进制时从该 tag 的干净检出构建，用 Makefile 注入版本信息：
 
