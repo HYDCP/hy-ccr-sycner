@@ -35,20 +35,25 @@ type JobCollector struct {
 	hostInfo string
 	factory  *ccr.Factory
 	stop     chan struct{}
+
+	// publishLags receives the lag snapshot of every complete round, may be nil.
+	publishLags func(*ccr.JobLagSnapshot)
+	lastLags    *ccr.JobLagSnapshot
 }
 
-func NewJobCollector(db storage.DB, hostInfo string, factory *ccr.Factory) *JobCollector {
+func NewJobCollector(db storage.DB, hostInfo string, factory *ccr.Factory, publishLags func(*ccr.JobLagSnapshot)) *JobCollector {
 	log.Infof("JobCollector initialized with hostInfo: %s", hostInfo)
 	return &JobCollector{
-		db:       db,
-		hostInfo: hostInfo,
-		factory:  factory,
-		stop:     make(chan struct{}),
+		db:          db,
+		hostInfo:    hostInfo,
+		factory:     factory,
+		stop:        make(chan struct{}),
+		publishLags: publishLags,
 	}
 }
 
 func (c *JobCollector) Collect() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(ccr.JobLagCollectInterval)
 	defer ticker.Stop()
 
 	for {
@@ -75,17 +80,31 @@ func (c *JobCollector) updateMetrics() error {
 
 	log.Debugf("JobCollector fetched %d jobs for hostInfo: %s", len(jobs), c.hostInfo)
 
+	// Build the whole snapshot of this round, then publish it at once. A job
+	// whose lag fails this round keeps its last computed lag, with the error.
+	lags := make(map[string]ccr.JobLag, len(jobs))
+	keepLastLag := func(jobName string, err error) {
+		var lag ccr.JobLag
+		if c.lastLags != nil {
+			lag = c.lastLags.Jobs[jobName]
+		}
+		lag.Error = err.Error()
+		lags[jobName] = lag
+	}
+
 	runningJobNum := 0
 	for _, jobName := range jobs {
 		jobInfo, err := loadJobInfo(jobName, c.db)
 		if err != nil {
 			log.Warnf("load job %s info failed: %+v", jobName, err)
+			keepLastLag(jobName, err)
 			continue
 		}
 
 		jobProgress, err := loadJobProgress(jobName, c.db)
 		if err != nil {
 			log.Warnf("load job %s progress failed: %+v", jobName, err)
+			keepLastLag(jobName, err)
 			continue
 		}
 
@@ -98,16 +117,27 @@ func (c *JobCollector) updateMetrics() error {
 
 		srcSpec := &jobInfo.Src
 		commitSeq := jobProgress.CommitSeq
-		lag, interval, err := c.getJobLag(srcSpec, commitSeq)
+		lag, interval, nextTimestampMs, err := c.getJobLag(srcSpec, commitSeq)
 		if err != nil {
 			log.Warnf("get job %s lag failed: %+v", jobName, err)
+			keepLastLag(jobName, err)
 			continue
 		}
 
 		xmetrics.UpdateJobLag(jobName, lag, interval)
+		lags[jobName] = ccr.JobLag{
+			Lag:                   lag,
+			NextBinlogTimestampMs: nextTimestampMs,
+			CommitSeq:             commitSeq,
+			ComputedAt:            time.Now().UnixMilli(),
+		}
 	}
 	xmetrics.UpdateJobNum(runningJobNum)
 
+	c.lastLags = &ccr.JobLagSnapshot{GeneratedAt: time.Now().UnixMilli(), Jobs: lags}
+	if c.publishLags != nil {
+		c.publishLags(c.lastLags)
+	}
 	return nil
 }
 
@@ -141,19 +171,21 @@ func loadJobInfo(jobName string, db storage.DB) (*ccr.Job, error) {
 	return &job, nil
 }
 
-func (c *JobCollector) getJobLag(spec *base.Spec, commitSeq int64) (int64, float64, error) {
+// getJobLag returns the lag, the seconds between the next and the last binlog,
+// and the timestamp (ms) of the next binlog to sync (<= 0 when unknown).
+func (c *JobCollector) getJobLag(spec *base.Spec, commitSeq int64) (int64, float64, int64, error) {
 	feRpc, err := c.factory.NewFeRpc(spec)
 	if err != nil {
-		return 0, 0, xerror.Wrapf(err, xerror.Normal, "new fe rpc failed")
+		return 0, 0, 0, xerror.Wrapf(err, xerror.Normal, "new fe rpc failed")
 	}
 
 	resp, err := feRpc.GetBinlogLag(spec, commitSeq)
 	if err != nil {
-		return 0, 0, xerror.Wrapf(err, xerror.Normal, "rpc get bin log failed")
+		return 0, 0, 0, xerror.Wrapf(err, xerror.Normal, "rpc get bin log failed")
 	}
 
 	if status := resp.GetStatus(); status.GetStatusCode() != tstatus.TStatusCode_OK {
-		return 0, 0, xerror.Errorf(xerror.Normal, "get binlog lag failed, status: %s",
+		return 0, 0, 0, xerror.Errorf(xerror.Normal, "get binlog lag failed, status: %s",
 			utils.FirstOr(status.GetErrorMsgs(), status.GetStatusCode().String()))
 	}
 
@@ -164,5 +196,5 @@ func (c *JobCollector) getJobLag(spec *base.Spec, commitSeq int64) (int64, float
 	if intervals <= 0 || lag <= 0 {
 		intervals = 0
 	}
-	return lag, intervals, nil
+	return lag, intervals, nextTimestampMs, nil
 }

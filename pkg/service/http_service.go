@@ -44,6 +44,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var featureJobLags bool
+
+func init() {
+	flag.BoolVar(&featureJobLags, "feature_job_lags", true,
+		"enable GET /job_lags, the lags and error summaries of all jobs of this syncer")
+}
+
 // TODO(Drogon): impl a generic http request handle parse json
 
 func writeJson(w http.ResponseWriter, data interface{}) {
@@ -378,6 +385,37 @@ func (s *HttpService) getLagHandler(w http.ResponseWriter, r *http.Request) {
 		NextCommitSeq:        nextCommitSeq,
 		NextBinlogTimestamp:  nextBinlogTimestamp,
 	}
+}
+
+// jobLagsHandler serves GET /job_lags: the lag of every job of this syncer from
+// the latest job collector round, with the error summary of each job. It reads
+// the collector snapshot and per-job fields only: no meta db, no FE, and no
+// job manager lock.
+func (s *HttpService) jobLagsHandler(w http.ResponseWriter, r *http.Request) {
+	log.Debugf("get job lags")
+
+	if !featureJobLags {
+		writeJson(w, newErrorResult("job_lags is disabled by feature_job_lags=false"))
+		return
+	}
+
+	type result struct {
+		*defaultResult
+		// The end of the latest collector round (unix ms), null before the first one.
+		SnapshotAt        *int64            `json:"snapshot_at"`
+		CollectIntervalMs int64             `json:"collect_interval_ms"`
+		Jobs              []ccr.JobLagEntry `json:"jobs"`
+	}
+	snapshot := s.jobManager.JobLagSnapshot()
+	res := &result{
+		defaultResult:     newSuccessResult(),
+		CollectIntervalMs: ccr.JobLagCollectInterval.Milliseconds(),
+		Jobs:              ccr.BuildJobLagEntries(s.jobManager.JobsView(), snapshot),
+	}
+	if snapshot != nil {
+		res.SnapshotAt = &snapshot.GeneratedAt
+	}
+	writeJson(w, res)
 }
 
 // Pause service
@@ -1286,6 +1324,7 @@ func (s *HttpService) RegisterHandlers() {
 	s.mux.HandleFunc("/delete", s.deleteHandler)
 	s.mux.HandleFunc("/desync", s.desyncHandler)
 	s.mux.HandleFunc("/get_lag", s.getLagHandler)
+	s.mux.HandleFunc("/job_lags", s.jobLagsHandler)
 	s.mux.HandleFunc("/list_jobs", s.listJobsHandler)
 	s.mux.HandleFunc("/job_detail", s.jobDetailHandler)
 	s.mux.HandleFunc("/job_status", s.statusHandler)

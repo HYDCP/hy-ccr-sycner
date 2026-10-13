@@ -203,3 +203,65 @@ func TestInvalidateBackendsCacheHandlerRequestBody(t *testing.T) {
 		})
 	}
 }
+
+func TestJobLagsHandler(t *testing.T) {
+	jobManager := ccr.NewJobManager(nil, nil, "test-syncer")
+	service := NewHttpServer("127.0.0.1", 9190, nil, jobManager)
+	service.RegisterHandlers()
+	get := func(method string) (int, map[string]any) {
+		response := httptest.NewRecorder()
+		service.mux.ServeHTTP(response, httptest.NewRequest(method, "/job_lags", nil))
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+		return response.Code, body
+	}
+
+	// Before the first collector round: no snapshot time, no lag yet.
+	code, body := get(http.MethodGet)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, map[string]any{
+		"success": true, "snapshot_at": nil, "collect_interval_ms": float64(10000), "jobs": []any{},
+	}, body)
+
+	jobManager.PublishJobLagSnapshot(&ccr.JobLagSnapshot{GeneratedAt: 1234, Jobs: map[string]ccr.JobLag{}})
+	_, body = get(http.MethodGet)
+	require.Equal(t, float64(1234), body["snapshot_at"])
+
+	// Turning the feature flag off makes the platform fall back to /get_lag.
+	featureJobLags = false
+	defer func() { featureJobLags = true }()
+	code, body = get(http.MethodGet)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, map[string]any{
+		"success": false, "error_msg": "job_lags is disabled by feature_job_lags=false",
+	}, body)
+}
+
+func TestFeaturesDeclareJobLags(t *testing.T) {
+	service := NewHttpServer("127.0.0.1", 9190, nil, ccr.NewJobManager(nil, nil, "test-syncer"))
+	service.RegisterHandlers()
+	response := httptest.NewRecorder()
+	service.mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/features", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+
+	// The shape the platform decodes (syncerclient.FeaturesResponse).
+	var features struct {
+		Success bool `json:"success"`
+		Flags   []struct {
+			Feature string `json:"feature"`
+			Value   bool   `json:"value"`
+			Default string `json:"default"`
+		} `json:"flags"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&features))
+	require.True(t, features.Success)
+	found := false
+	for _, flag := range features.Flags {
+		if flag.Feature == "feature_job_lags" {
+			found = true
+			require.True(t, flag.Value)
+			require.Equal(t, "true", flag.Default)
+		}
+	}
+	require.True(t, found, "feature_job_lags is not declared in /features")
+}

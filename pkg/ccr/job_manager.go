@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/selectdb/ccr_syncer/pkg/storage"
@@ -40,6 +41,10 @@ type JobManager struct {
 	hostInfo string
 	stop     chan struct{}
 	wg       sync.WaitGroup
+
+	// Lock-free copies for the monitoring endpoints, see job_lags.go.
+	jobsView    atomic.Pointer[[]*Job]
+	lagSnapshot atomic.Pointer[JobLagSnapshot]
 }
 
 func NewJobManager(db storage.DB, factory *Factory, hostInfo string) *JobManager {
@@ -93,6 +98,7 @@ func (jm *JobManager) AddJob(job *Job) error {
 
 	// Step 4: run job
 	jm.jobs[job.Name] = job
+	jm.refreshJobsViewLocked()
 	jm.runJob(job)
 
 	return nil
@@ -124,6 +130,9 @@ func (jm *JobManager) Recover(jobNames []string) error {
 	for _, job := range jobs {
 		jm.jobs[job.Name] = job
 		jm.runJob(job)
+	}
+	if len(jobs) > 0 {
+		jm.refreshJobsViewLocked()
 	}
 	return nil
 }
@@ -201,6 +210,7 @@ func (jm *JobManager) runJob(job *Job) {
 			if job.IsDeleted() {
 				jm.lock.Lock()
 				delete(jm.jobs, job.Name)
+				jm.refreshJobsViewLocked()
 				jm.lock.Unlock()
 				log.Infof("job [%s] goroutine exited, removed from map", job.Name)
 			}

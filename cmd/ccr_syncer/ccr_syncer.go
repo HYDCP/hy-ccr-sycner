@@ -228,7 +228,7 @@ func main() {
 	}()
 
 	// Step 9: start job collector
-	jobCollector := NewJobCollector(db, hostInfo, factory)
+	jobCollector := NewJobCollector(db, hostInfo, factory, jobManager.PublishJobLagSnapshot)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
