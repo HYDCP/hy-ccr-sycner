@@ -255,8 +255,9 @@ type Job struct {
 	// Replication number policy: -1 means inherit from upstream (default), >0 means fixed replica num, 0 is invalid
 	ReplicationNum int `json:"replication_num,omitempty"`
 
-	// Observation only, in memory: the suspected binlog gap.
+	// Observation only, in memory: the suspected binlog gap and the sync errors.
 	binlogGap binlogGapMarker `json:"-"`
+	errStats  jobErrorStats   `json:"-"`
 }
 
 type JobContext struct {
@@ -4136,6 +4137,7 @@ func (j *Job) run() {
 
 			err := j.sync()
 			if err == nil {
+				j.errStats.recordSuccess(time.Now())
 				break
 			}
 
@@ -4146,6 +4148,9 @@ func (j *Job) run() {
 				log.Warnf("job sync failed, job: %s, err: %+v", j.Name, err)
 			}
 			panicError = j.handleError(j.Name, err)
+			if !errors.Is(err, context.Canceled) {
+				j.errStats.recordFailure(err, panicError != nil, time.Now())
+			}
 		}
 	}
 }
@@ -4588,6 +4593,7 @@ func (j *Job) updateJobStatus() {
 	atomic.StoreInt32(&j.rawStatus.state, int32(j.State))
 	if j.progress != nil {
 		atomic.StoreInt32(&j.rawStatus.progressState, int32(j.progress.SyncState))
+		j.errStats.observeCommitSeq(j.progress.PrevCommitSeq, time.Now())
 	}
 }
 
@@ -4598,6 +4604,7 @@ type JobStatus struct {
 	CommitSeq     int64  `json:"commit_seq"`
 
 	BinlogGapStatus
+	JobErrorStatus
 }
 
 func (j *Job) Status() *JobStatus {
@@ -4611,6 +4618,7 @@ func (j *Job) Status() *JobStatus {
 		ProgressState:   progressState,
 		CommitSeq:       commitSeq,
 		BinlogGapStatus: j.binlogGap.get(),
+		JobErrorStatus:  j.errStats.get(),
 	}
 }
 
