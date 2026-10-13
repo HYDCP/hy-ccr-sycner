@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/prometheus/common/expfmt"
 	"github.com/selectdb/ccr_syncer/pkg/ccr"
@@ -95,7 +96,7 @@ func TestJobCollectorUpdateMetrics(t *testing.T) {
 					jobJSON, err := json.Marshal(&ccr.Job{Name: jobName, State: ccr.JobRunning, Src: src})
 					require.NoError(t, err)
 					db := &jobCollectorTestDB{jobName: jobName, jobInfo: string(jobJSON)}
-					collector := NewJobCollector(db, "syncer", &ccr.Factory{IRpcFactory: rpcFactory})
+					collector := NewJobCollector(db, "syncer", &ccr.Factory{IRpcFactory: rpcFactory}, nil)
 					progress := &ccr.JobProgress{CommitSeq: 100}
 					setProgress := func(state ccr.SyncState, subState ccr.SubSyncState) {
 						progress.SyncState = state
@@ -192,4 +193,117 @@ func jobCollectorMetrics(t *testing.T, jobName string) map[string]float64 {
 		}
 	}
 	return values
+}
+
+// lagTestDB serves several jobs; a job without info fails to load.
+type lagTestDB struct {
+	storage.DB
+	jobs     []string
+	listErr  error
+	infos    map[string]string
+	progress string
+}
+
+func (db *lagTestDB) GetStampAndJobs(string) (int64, []string, error) {
+	return 0, db.jobs, db.listErr
+}
+
+func (db *lagTestDB) GetJobInfo(name string) (string, error) {
+	if info, ok := db.infos[name]; ok {
+		return info, nil
+	}
+	return "", errors.New("job info not found")
+}
+
+func (db *lagTestDB) GetProgress(string) (string, error) {
+	return db.progress, nil
+}
+
+// lagTestFeRPC answers GetBinlogLag per source table.
+type lagTestFeRPC struct {
+	rpc.IFeRpc
+	lags map[string]*frontendservice.TGetBinlogLagResult_
+}
+
+func (fe *lagTestFeRPC) GetBinlogLag(spec *base.Spec, _ int64) (*frontendservice.TGetBinlogLagResult_, error) {
+	if resp, ok := fe.lags[spec.Table]; ok {
+		return resp, nil
+	}
+	return nil, errors.New("lag RPC failed")
+}
+
+type lagTestRPCFactory struct{ fe rpc.IFeRpc }
+
+func (f *lagTestRPCFactory) NewFeRpc(*base.Spec) (rpc.IFeRpc, error) { return f.fe, nil }
+func (f *lagTestRPCFactory) NewBeRpc(*base.Backend) (rpc.IBeRpc, error) {
+	return nil, errors.New("unused")
+}
+
+func TestJobCollectorPublishesWholeLagSnapshots(t *testing.T) {
+	prefix := fmt.Sprintf("lag_snapshot_%d_", atomic.AddUint64(&jobCollectorTestSequence, 1))
+	jobInfo := func(name string) string {
+		data, err := json.Marshal(&ccr.Job{Name: prefix + name, State: ccr.JobRunning, Src: base.Spec{Table: name}})
+		require.NoError(t, err)
+		return string(data)
+	}
+	progress, err := json.Marshal(&ccr.JobProgress{SyncState: ccr.TableIncrementalSync, SubSyncState: ccr.Done, CommitSeq: 100})
+	require.NoError(t, err)
+	db := &lagTestDB{
+		jobs:     []string{prefix + "ok", prefix + "flaky", prefix + "gone"},
+		infos:    map[string]string{prefix + "ok": jobInfo("ok"), prefix + "flaky": jobInfo("flaky"), prefix + "gone": jobInfo("gone")},
+		progress: string(progress),
+	}
+	fe := &lagTestFeRPC{lags: map[string]*frontendservice.TGetBinlogLagResult_{
+		"ok":    jobCollectorLagResponse(5, 2000),
+		"flaky": jobCollectorLagResponse(6, 3000),
+		"gone":  jobCollectorLagResponse(7, 4000),
+	}}
+	var published []*ccr.JobLagSnapshot
+	collector := NewJobCollector(db, "syncer", &ccr.Factory{IRpcFactory: &lagTestRPCFactory{fe: fe}},
+		func(snapshot *ccr.JobLagSnapshot) { published = append(published, snapshot) })
+
+	before := time.Now().UnixMilli()
+	require.NoError(t, collector.updateMetrics())
+	require.Len(t, published, 1)
+	first := published[0]
+	require.GreaterOrEqual(t, first.GeneratedAt, before)
+	require.Len(t, first.Jobs, 3)
+	okLag := first.Jobs[prefix+"ok"]
+	require.Equal(t, int64(5), okLag.Lag)
+	require.Equal(t, int64(1000), okLag.NextBinlogTimestampMs)
+	require.Equal(t, int64(100), okLag.CommitSeq)
+	require.GreaterOrEqual(t, okLag.ComputedAt, before)
+	require.Empty(t, okLag.Error)
+	firstFlaky := first.Jobs[prefix+"flaky"]
+
+	// Round 2: the flaky lag RPC fails, gone is no longer on this syncer, and
+	// the info of a new job cannot be loaded.
+	fe.lags["ok"] = jobCollectorLagResponse(0, 0)
+	fe.lags["ok"].NextBinlogTimestamp = func() *int64 { v := int64(-1); return &v }()
+	delete(fe.lags, "flaky")
+	db.jobs = []string{prefix + "ok", prefix + "flaky", prefix + "new"}
+	require.NoError(t, collector.updateMetrics())
+	require.Len(t, published, 2)
+	second := published[1]
+	require.Len(t, second.Jobs, 3)
+	require.Equal(t, int64(0), second.Jobs[prefix+"ok"].Lag)
+	require.Equal(t, int64(-1), second.Jobs[prefix+"ok"].NextBinlogTimestampMs)
+	flaky := second.Jobs[prefix+"flaky"]
+	require.Equal(t, firstFlaky.Lag, flaky.Lag)
+	require.Equal(t, firstFlaky.ComputedAt, flaky.ComputedAt)
+	require.Contains(t, flaky.Error, "lag RPC failed")
+	newJob := second.Jobs[prefix+"new"]
+	require.Zero(t, newJob.ComputedAt)
+	require.Contains(t, newJob.Error, "job info not found")
+	require.NotContains(t, second.Jobs, prefix+"gone")
+
+	// The published snapshot is replaced, never modified.
+	require.Len(t, first.Jobs, 3)
+	require.Equal(t, okLag, first.Jobs[prefix+"ok"])
+	require.Empty(t, first.Jobs[prefix+"flaky"].Error)
+
+	// A round that cannot list the jobs keeps the previous snapshot.
+	db.listErr = errors.New("meta db down")
+	require.Error(t, collector.updateMetrics())
+	require.Len(t, published, 2)
 }
