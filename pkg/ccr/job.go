@@ -254,6 +254,9 @@ type Job struct {
 
 	// Replication number policy: -1 means inherit from upstream (default), >0 means fixed replica num, 0 is invalid
 	ReplicationNum int `json:"replication_num,omitempty"`
+
+	// Observation only, in memory: the suspected binlog gap.
+	binlogGap binlogGapMarker `json:"-"`
 }
 
 type JobContext struct {
@@ -1047,6 +1050,8 @@ func (j *Job) fullSync() error {
 	err := j.fullSyncWithPermit()
 	if err != nil {
 		j.releasePermit()
+	} else {
+		j.clearBinlogGapIfFullSynced()
 	}
 	return err
 }
@@ -3926,6 +3931,8 @@ func (j *Job) incrementalSyncInternal() error {
 		switch status.StatusCode {
 		case tstatus.TStatusCode_OK:
 		case tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ:
+			// Handled as OK, as before; only report it.
+			j.reportBinlogTooOld("incremental sync", commitSeq, getBinlogResp)
 		case tstatus.TStatusCode_BINLOG_TOO_NEW_COMMIT_SEQ:
 			// consume prev txn id for not to check and wait prev transaction finished
 			if j.progress.PrevTxnId != -1 {
@@ -4589,6 +4596,8 @@ type JobStatus struct {
 	State         string `json:"state"`
 	ProgressState string `json:"progress_state"`
 	CommitSeq     int64  `json:"commit_seq"`
+
+	BinlogGapStatus
 }
 
 func (j *Job) Status() *JobStatus {
@@ -4597,10 +4606,11 @@ func (j *Job) Status() *JobStatus {
 	commitSeq := atomic.LoadInt64(&j.rawStatus.commitSeq)
 
 	return &JobStatus{
-		Name:          j.Name,
-		State:         state,
-		ProgressState: progressState,
-		CommitSeq:     commitSeq,
+		Name:            j.Name,
+		State:           state,
+		ProgressState:   progressState,
+		CommitSeq:       commitSeq,
+		BinlogGapStatus: j.binlogGap.get(),
 	}
 }
 
@@ -4714,6 +4724,8 @@ func (j *Job) GetSpecifiedBinlog(commitSeq int64) (*festruct.TBinlog, error) {
 	switch status.StatusCode {
 	case tstatus.TStatusCode_OK:
 	case tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ:
+		// Handled as OK, as before; only report it.
+		j.reportBinlogTooOld("get specified binlog", prevCommitSeq, getBinlogResp)
 	case tstatus.TStatusCode_BINLOG_TOO_NEW_COMMIT_SEQ:
 		return nil, xerror.Errorf(xerror.Normal, "binlog is too new, commit seq: %d", commitSeq)
 	case tstatus.TStatusCode_BINLOG_DISABLE:

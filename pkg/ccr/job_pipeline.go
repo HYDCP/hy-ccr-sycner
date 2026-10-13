@@ -477,6 +477,8 @@ func (j *Job) getNextBinlogs() error {
 	switch status.StatusCode {
 	case tstatus.TStatusCode_OK:
 	case tstatus.TStatusCode_BINLOG_TOO_OLD_COMMIT_SEQ:
+		// Handled as OK, as before; only report it.
+		j.reportBinlogTooOld("pipeline sync", commitSeq, getBinlogResp)
 	case tstatus.TStatusCode_BINLOG_TOO_NEW_COMMIT_SEQ:
 		// consume prev txn id for not to check and wait prev transaction finished
 		if j.progress.PrevTxnId != -1 {
