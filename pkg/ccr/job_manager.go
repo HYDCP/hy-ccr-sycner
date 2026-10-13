@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/selectdb/ccr_syncer/pkg/storage"
 	"github.com/selectdb/ccr_syncer/pkg/xerror"
@@ -193,6 +194,7 @@ func (jm *JobManager) runJob(job *Job) {
 			// 1. Recover from panic to ensure cleanup always runs
 			if r := recover(); r != nil {
 				log.Errorf("job %s panic: %v", job.Name, r)
+				job.errStats.recordFailure(fmt.Errorf("panic: %v", r), true, time.Now())
 			}
 
 			// 2. If job was deleted, remove from map after goroutine exits
@@ -210,6 +212,8 @@ func (jm *JobManager) runJob(job *Job) {
 		err := job.Run()
 		if err != nil {
 			log.Errorf("job run failed, job name: %s, error: %+v", job.Name, err)
+			// The job routine exits and never syncs again, like after a panic.
+			job.errStats.recordFailure(err, true, time.Now())
 		}
 	}()
 }
