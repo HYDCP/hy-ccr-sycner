@@ -93,7 +93,9 @@ func parseConfigFile() error {
 
 	// read file by line
 	scanner := bufio.NewScanner(file)
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		if len(line) == 0 || strings.HasPrefix(line, "#") { // skip empty or comment lines
 			continue
@@ -102,7 +104,8 @@ func parseConfigFile() error {
 		// split the line by '='
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("invalid line '%s', it must have only one '='", line)
+			// Do not quote the line, it may hold a password.
+			return fmt.Errorf("invalid line %d, it must be key=value", lineNo)
 		}
 
 		key := strings.TrimSpace(parts[0])
@@ -111,14 +114,17 @@ func parseConfigFile() error {
 			continue
 		}
 
+		if err := flag.Set(key, value); err != nil {
+			return fmt.Errorf("set flag %s (line %d): %v", key, lineNo, err)
+		}
+
+		// Log only after the flag is set: a misspelled password key does not
+		// contain "password" and would be logged in clear text.
 		logValue := value
 		if strings.Contains(key, "password") {
 			logValue = "******"
 		}
 		log.Infof("force set config %s=%s", key, logValue)
-		if err := flag.Set(key, value); err != nil {
-			return fmt.Errorf("set flag key value '%s': %v", line, err)
-		}
 	}
 
 	return nil

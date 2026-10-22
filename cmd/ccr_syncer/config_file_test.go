@@ -52,3 +52,37 @@ func TestParseConfigFileLogOmitsPassword(t *testing.T) {
 	}
 	require.True(t, passwordLogged, "the db_password override is not logged")
 }
+
+func TestParseConfigFileErrorOmitsPassword(t *testing.T) {
+	const password = "s3cret-Passw0rd"
+
+	for _, tc := range []struct {
+		name   string
+		line   string
+		expect string
+	}{
+		{name: "no equal sign", line: "db_password " + password, expect: "invalid line 2"},
+		{name: "misspelled key", line: "db_pasword=" + password, expect: "set flag db_pasword (line 2)"},
+		{name: "invalid value", line: "db_port=" + password, expect: "set flag db_port (line 2)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saved := syncer
+			defer func() { syncer = saved }()
+
+			syncer.Config_file = filepath.Join(t.TempDir(), "ccr.conf")
+			content := "db_user=ccr_user\n" + tc.line + "\n"
+			require.NoError(t, os.WriteFile(syncer.Config_file, []byte(content), 0o600))
+
+			hook := logtest.NewGlobal()
+			defer hook.Reset()
+
+			err := parseConfigFile()
+			require.Error(t, err)
+			require.NotContains(t, err.Error(), password)
+			require.Contains(t, err.Error(), tc.expect)
+			for _, entry := range hook.AllEntries() {
+				require.NotContains(t, entry.Message, password, "log: %s", entry.Message)
+			}
+		})
+	}
+}
