@@ -19,6 +19,7 @@ package base
 import (
 	"database/sql"
 	"flag"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,7 +69,7 @@ func GetMysqlDB(dsn string) (*sql.DB, error) {
 	}
 
 	if db, err := sql.Open("mysql", dsn); err != nil {
-		return nil, xerror.Wrapf(err, xerror.DB, "connect to mysql failed, dsn: %s", dsn)
+		return nil, xerror.Wrapf(err, xerror.DB, "connect to mysql failed, dsn: %s", redactDSN(dsn))
 	} else {
 		db.SetMaxOpenConns(MaxOpenConns)
 		if MaxOpenConns > 0 {
@@ -81,4 +82,26 @@ func GetMysqlDB(dsn string) (*sql.DB, error) {
 		cachedSqlDbPool.pool[dsn] = db
 		return db, nil
 	}
+}
+
+// redactDSN masks the password of a DSN like user:password@tcp(host:port)/, so
+// the DSN can go into logs and errors.
+//
+// It finds the password the way go-sql-driver/mysql does: between the first
+// ':' and the last '@' before the last '/'. It cannot use mysql.ParseDSN, since
+// a DSN is only reported when the driver fails to parse it.
+func redactDSN(dsn string) string {
+	end := strings.LastIndexByte(dsn, '/')
+	if end < 0 {
+		end = len(dsn)
+	}
+	at := strings.LastIndexByte(dsn[:end], '@')
+	if at < 0 {
+		return dsn
+	}
+	colon := strings.IndexByte(dsn[:at], ':')
+	if colon < 0 {
+		return dsn
+	}
+	return dsn[:colon+1] + "******" + dsn[at:]
 }

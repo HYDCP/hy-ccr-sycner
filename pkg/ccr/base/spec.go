@@ -244,7 +244,12 @@ type Spec struct {
 	observers []utils.Observer[SpecEvent]
 }
 
-func (s *Spec) String() string {
+// String leaves out Password, so a Spec is safe to log.
+//
+// It has a value receiver on purpose: Specs are often logged by value (e.g.
+// Job.Src, CreateCcrRequest.Src), and fmt only uses a pointer-receiver String
+// for pointers, falling back to printing every field, Password included.
+func (s Spec) String() string {
 	return fmt.Sprintf("host: %s, port: %s, thrift_port: %s, user: %s, cluster: %s, database: %s, database id: %d, table: %s, table id: %d",
 		s.Host, s.Port, s.ThriftPort, s.User, s.Cluster, s.Database, s.DbId, s.Table, s.TableId)
 }
