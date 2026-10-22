@@ -41,7 +41,7 @@ type MysqlDB struct {
 func NewMysqlDB(host string, port int, user string, password string, remoteDBName string) (DB, error) {
 	dbForDDL, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/?maxAllowedPacket=%d", user, password, host, port, maxAllowedPacket))
 	if err != nil {
-		return nil, xerror.Wrapf(err, xerror.DB, "mysql: open %s@tcp(%s:%s) failed", user, host, password)
+		return nil, xerror.Wrapf(err, xerror.DB, "mysql: open %s@tcp(%s:%d) failed", user, host, port)
 	}
 
 	if _, err := dbForDDL.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", remoteDBName)); err != nil {
