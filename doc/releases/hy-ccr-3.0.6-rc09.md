@@ -25,7 +25,7 @@ HYDCP 3.0.6 生产线的候选版本，唯一 Git tag 为 `hy-ccr-3.0.6-rc09`，
   PR #13 以三个独立提交合入，S1、S2、S3 各一个，代码上可以按 S3 → S2 → S1 倒序单独回滚。
 - 不包含：
   - `dev`（4.0.x 线）上的任何改动。[PR #15](https://github.com/HYDCP/hy-ccr-sycner/pull/15) 是 #14 在 `dev` 上的移植，属于另一条版本线。
-  - 生产补丁分支 `release/3.0.6-rc07-no-migrate` 独有的 `8338772c`（FE RPC 诊断日志）。这个分支不在 HYDCP 仓库上，位置见「升级与回退检查」。
+  - 生产补丁分支 `release/3.0.6-rc07-no-migrate` 独有的 `8338772c`（FE RPC 诊断日志）。这个分支在 HYDCP 仓库的 `release/3.0.6-rc07-no-migrate` 分支（`8338772c`），见「升级与回退检查」。
   - `/job_detail` 屏蔽密码（[HYDCP/hy-ccr-sycner#16](https://github.com/HYDCP/hy-ccr-sycner/issues/16)）。
   - `BINLOG_TOO_OLD_COMMIT_SEQ` 自动转全量（`feat-binlog-too-old-gap` 分支）。
 
@@ -250,9 +250,9 @@ Makefile 的版本取自 `git describe --abbrev=0 --always --dirty --tags`，只
 
 ### 从生产补丁分支 `release/3.0.6-rc07-no-migrate`（`8338772c`）升级
 
-这个分支不在 HYDCP 仓库上：
+这个分支的位置和来源：
 
-- 它在 fork Ryan19929/ccr-syncer 上叫 `3.0.6-rc07-node-info`，head `8338772c`。`release/3.0.6-rc07-no-migrate` 是维护者本地检出的分支名，平台文档和运维记录里用的是这个名字。
+- 在 HYDCP 仓库的 `release/3.0.6-rc07-no-migrate` 分支（`8338772c`）。fork Ryan19929/ccr-syncer 上的 `3.0.6-rc07-node-info` 是同一个提交。
 - 它从 `69184ae1`（加入 `/node_info`）分出，只多一个提交 `8338772c`。`69184ae1` 带 tag `3.0.6-rc07-node-info-add`，所以按 Makefile 构建的补丁分支，`/version` 为 `3.0.6-rc07-node-info-add:8338772`。升级前先用 `curl <syncer>:9190/version` 核对现网是这个值。
 
 升级到本版会同时带上 rc08、rc08.1 的全部改动，它们各自的行为变化都适用，先读 [hy-ccr-3.0.6-rc08.md](hy-ccr-3.0.6-rc08.md#行为变化) 和 [hy-ccr-3.0.6-rc08.1.md](hy-ccr-3.0.6-rc08.1.md#行为变化)。要点：
