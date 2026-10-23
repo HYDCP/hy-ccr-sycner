@@ -1,5 +1,27 @@
 # 更新日志
 
+# hy-ccr-3.0.6-rc09
+
+基于 `hy-ccr-3.0.6-rc08.1`，包含 HYDCP/hy-ccr-sycner#13（监控首批改动 S1–S3）和 #14（日志脱敏）。只增加观测、修正日志内容，不改同步流程和状态机，不改元库表结构，不增加对 FE 和元库的访问。
+
+### Feature
+
+- 新增 `GET /job_lags`：一次返回本节点全部任务的 lag、最早未同步 binlog 的毫秒时间戳、`commit_seq`、计算时间和错误摘要。数据取自 JobCollector 每 10 秒一轮、整轮原子替换的快照，接口不访问元库和 FE，也不拿 JobManager 的锁。新增启动参数 `feature_job_lags`（默认 true，列在 `/features` 中），设为 false 时该接口返回 `success:false`（HYDCP/hy-ccr-sycner#13）。
+- `/job_status` 新增同步错误字段：`last_error`、`last_error_category`、`last_error_at`、`first_failure_at`、`consecutive_failures`、`last_success_at`、`panicked`、`recent_errors`（HYDCP/hy-ccr-sycner#13）。
+- `BINLOG_TOO_OLD_COMMIT_SEQ` 不再静默：读取 binlog 的三处每次遇到都写 ERROR 日志（`binlog too old`），并在任务上记「疑似 binlog 缺口」标记，由 `/job_status`（`binlog_gap_*`）和 `/job_lags`（`binlog_gap_suspected`）返回，全量同步完成后清除。对返回 binlog 的处理不变（HYDCP/hy-ccr-sycner#13）。
+
+### Fix
+
+- 以下日志和错误不再带数据源、元库密码：`Spec.String()` 改为值接收者，`/create_ccr` 和取 FE 列表失败的日志不再逐字段打印 Spec；`GetMysqlDB` 报错时遮掉 DSN 中的密码；`NewMysqlDB` 报错时在端口的位置打印端口而不是密码；`-config_file` 中 key 含 `password` 的项在日志里打成 `******`，出错时只报行号和 key（HYDCP/hy-ccr-sycner#14）。
+
+### Compatibility / Known limitations
+
+- 接口变化都是新增：新路由 `/job_lags`、`/job_status` 新字段、`/features` 新增 `feature_job_lags`；原有字段和 `/get_lag` 不变。元库表结构不变，原有启动参数不变。
+- `create ccr name: ...` 和 `get src/dest frontends failed` 两行日志里 src/dest 的格式从结构体逐字段输出改为 `host: ..., port: ..., user: ...`；按位置解析这两行的脚本需要调整。
+- 新增的错误字段和缺口标记都只在内存中，进程重启后清零。
+- 仍有带密码的输出：`/job_detail` 响应（HYDCP/hy-ccr-sycner#16），以及 PostgreSQL 元库连接 URL 解析失败时的报错（已有问题）。升级也不会清掉旧版本写进历史日志的明文密码。
+- `BINLOG_TOO_OLD_COMMIT_SEQ`：FE 返回 DUMMY binlog 时沿用原有逻辑转全量；除此之外不自动修复缺口，需要人工 `force_fullsync`。rc08、rc08.1 的已知限制继续适用。构建必须用 Go 1.20。从 rc08.1 和从生产补丁分支 `release/3.0.6-rc07-no-migrate` 升级的差别见 [发布说明](doc/releases/hy-ccr-3.0.6-rc09.md)。
+
 # hy-ccr-3.0.6-rc08.1
 
 `hy-ccr-3.0.6-rc08` 的补丁版本，仅包含 HYDCP/hy-ccr-sycner#7（dev 上 #6 的 backport）。不移动 `hy-ccr-3.0.6-rc08` tag。
