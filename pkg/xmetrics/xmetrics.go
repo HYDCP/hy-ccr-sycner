@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -51,6 +52,12 @@ var (
 
 	sqlExecCounters   *prometheus.CounterVec
 	sqlExecHistograms *prometheus.HistogramVec
+
+	singleReplicaIngestSuccessCounters        *prometheus.CounterVec
+	singleReplicaIngestRetryCounters          *prometheus.CounterVec
+	singleReplicaIngestFallbackCounters       *prometheus.CounterVec
+	singleReplicaIngestFollowerCounters       *prometheus.CounterVec
+	singleReplicaIngestFollowerFailedCounters *prometheus.CounterVec
 
 	LargeBuckets = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50}
 )
@@ -149,6 +156,31 @@ func init() {
 		Help:    "The sql exec duration in seconds",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"host", "db"})
+
+	singleReplicaIngestSuccessCounters = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
+		Name: "ccr_single_replica_ingest_success_total",
+		Help: "The number of successful single replica ingest binlog",
+	}, []string{"job_name"})
+
+	singleReplicaIngestRetryCounters = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
+		Name: "ccr_single_replica_ingest_retry_total",
+		Help: "The number of single replica ingest binlog retries",
+	}, []string{"job_name"})
+
+	singleReplicaIngestFallbackCounters = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
+		Name: "ccr_single_replica_ingest_fallback_total",
+		Help: "The number of single replica ingest binlog fallbacks to multi-replica path",
+	}, []string{"job_name"})
+
+	singleReplicaIngestFollowerCounters = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
+		Name: "ccr_single_replica_ingest_follower_total",
+		Help: "The number of follower ingest binlog attempts",
+	}, []string{"job_name", "backend_id"})
+
+	singleReplicaIngestFollowerFailedCounters = promauto.With(registry).NewCounterVec(prometheus.CounterOpts{
+		Name: "ccr_single_replica_ingest_follower_failed_total",
+		Help: "The number of failed follower ingest binlog attempts",
+	}, []string{"job_name", "backend_id"})
 }
 
 func RecordError(jobName string, err *xerror.XError) {
@@ -211,6 +243,38 @@ func RecordSqlExec(ip, port, db string) func() {
 		sqlExecCounters.With(prometheus.Labels{"host": host, "db": db}).Inc()
 		sqlExecHistograms.With(prometheus.Labels{"host": host, "db": db}).Observe(time.Since(start).Seconds())
 	}
+}
+
+func RecordSingleReplicaIngestSuccess(jobName string) {
+	singleReplicaIngestSuccessCounters.With(prometheus.Labels{
+		"job_name": jobName,
+	}).Inc()
+}
+
+func RecordSingleReplicaIngestRetry(jobName string) {
+	singleReplicaIngestRetryCounters.With(prometheus.Labels{
+		"job_name": jobName,
+	}).Inc()
+}
+
+func RecordSingleReplicaIngestFallback(jobName string) {
+	singleReplicaIngestFallbackCounters.With(prometheus.Labels{
+		"job_name": jobName,
+	}).Inc()
+}
+
+func RecordSingleReplicaIngestFollower(jobName string, backendId int64) {
+	singleReplicaIngestFollowerCounters.With(prometheus.Labels{
+		"job_name":   jobName,
+		"backend_id": strconv.FormatInt(backendId, 10),
+	}).Inc()
+}
+
+func RecordSingleReplicaIngestFollowerFailed(jobName string, backendId int64) {
+	singleReplicaIngestFollowerFailedCounters.With(prometheus.Labels{
+		"job_name":   jobName,
+		"backend_id": strconv.FormatInt(backendId, 10),
+	}).Inc()
 }
 
 func GetHttpHandler() http.Handler {

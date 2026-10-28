@@ -3,6 +3,7 @@
 package backendservice
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -10364,15 +10365,981 @@ func (p *TWarmUpTabletsResponse) Field5DeepEqual(src *int64) bool {
 	return true
 }
 
+type TReplicaDistributionInfo struct {
+	BackendId *int64  `thrift:"backend_id,1,optional" frugal:"1,optional,i64" json:"backend_id,omitempty"`
+	Host      *string `thrift:"host,2,optional" frugal:"2,optional,string" json:"host,omitempty"`
+	BePort    *int32  `thrift:"be_port,3,optional" frugal:"3,optional,i32" json:"be_port,omitempty"`
+}
+
+func NewTReplicaDistributionInfo() *TReplicaDistributionInfo {
+	return &TReplicaDistributionInfo{}
+}
+
+func (p *TReplicaDistributionInfo) InitDefault() {
+}
+
+var TReplicaDistributionInfo_BackendId_DEFAULT int64
+
+func (p *TReplicaDistributionInfo) GetBackendId() (v int64) {
+	if !p.IsSetBackendId() {
+		return TReplicaDistributionInfo_BackendId_DEFAULT
+	}
+	return *p.BackendId
+}
+
+var TReplicaDistributionInfo_Host_DEFAULT string
+
+func (p *TReplicaDistributionInfo) GetHost() (v string) {
+	if !p.IsSetHost() {
+		return TReplicaDistributionInfo_Host_DEFAULT
+	}
+	return *p.Host
+}
+
+var TReplicaDistributionInfo_BePort_DEFAULT int32
+
+func (p *TReplicaDistributionInfo) GetBePort() (v int32) {
+	if !p.IsSetBePort() {
+		return TReplicaDistributionInfo_BePort_DEFAULT
+	}
+	return *p.BePort
+}
+func (p *TReplicaDistributionInfo) SetBackendId(val *int64) {
+	p.BackendId = val
+}
+func (p *TReplicaDistributionInfo) SetHost(val *string) {
+	p.Host = val
+}
+func (p *TReplicaDistributionInfo) SetBePort(val *int32) {
+	p.BePort = val
+}
+
+var fieldIDToName_TReplicaDistributionInfo = map[int16]string{
+	1: "backend_id",
+	2: "host",
+	3: "be_port",
+}
+
+func (p *TReplicaDistributionInfo) IsSetBackendId() bool {
+	return p.BackendId != nil
+}
+
+func (p *TReplicaDistributionInfo) IsSetHost() bool {
+	return p.Host != nil
+}
+
+func (p *TReplicaDistributionInfo) IsSetBePort() bool {
+	return p.BePort != nil
+}
+
+func (p *TReplicaDistributionInfo) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_TReplicaDistributionInfo[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *TReplicaDistributionInfo) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.BackendId = _field
+	return nil
+}
+func (p *TReplicaDistributionInfo) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Host = _field
+	return nil
+}
+func (p *TReplicaDistributionInfo) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.BePort = _field
+	return nil
+}
+
+func (p *TReplicaDistributionInfo) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("TReplicaDistributionInfo"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *TReplicaDistributionInfo) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBackendId() {
+		if err = oprot.WriteFieldBegin("backend_id", thrift.I64, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.BackendId); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *TReplicaDistributionInfo) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetHost() {
+		if err = oprot.WriteFieldBegin("host", thrift.STRING, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Host); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *TReplicaDistributionInfo) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBePort() {
+		if err = oprot.WriteFieldBegin("be_port", thrift.I32, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.BePort); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *TReplicaDistributionInfo) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("TReplicaDistributionInfo(%+v)", *p)
+
+}
+
+func (p *TReplicaDistributionInfo) DeepEqual(ano *TReplicaDistributionInfo) bool {
+	if p == ano {
+		return true
+	} else if p == nil || ano == nil {
+		return false
+	}
+	if !p.Field1DeepEqual(ano.BackendId) {
+		return false
+	}
+	if !p.Field2DeepEqual(ano.Host) {
+		return false
+	}
+	if !p.Field3DeepEqual(ano.BePort) {
+		return false
+	}
+	return true
+}
+
+func (p *TReplicaDistributionInfo) Field1DeepEqual(src *int64) bool {
+
+	if p.BackendId == src {
+		return true
+	} else if p.BackendId == nil || src == nil {
+		return false
+	}
+	if *p.BackendId != *src {
+		return false
+	}
+	return true
+}
+func (p *TReplicaDistributionInfo) Field2DeepEqual(src *string) bool {
+
+	if p.Host == src {
+		return true
+	} else if p.Host == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.Host, *src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TReplicaDistributionInfo) Field3DeepEqual(src *int32) bool {
+
+	if p.BePort == src {
+		return true
+	} else if p.BePort == nil || src == nil {
+		return false
+	}
+	if *p.BePort != *src {
+		return false
+	}
+	return true
+}
+
+type TIngestedFileInfo struct {
+	RemotePath   *string `thrift:"remote_path,1,optional" frugal:"1,optional,string" json:"remote_path,omitempty"`
+	Size         *int64  `thrift:"size,2,optional" frugal:"2,optional,i64" json:"size,omitempty"`
+	SegmentIndex *int32  `thrift:"segment_index,3,optional" frugal:"3,optional,i32" json:"segment_index,omitempty"`
+	IndexId      *int64  `thrift:"index_id,4,optional" frugal:"4,optional,i64" json:"index_id,omitempty"`
+	SuffixPath   *string `thrift:"suffix_path,5,optional" frugal:"5,optional,string" json:"suffix_path,omitempty"`
+	IsIndexFile  *bool   `thrift:"is_index_file,6,optional" frugal:"6,optional,bool" json:"is_index_file,omitempty"`
+	Md5          *string `thrift:"md5,7,optional" frugal:"7,optional,string" json:"md5,omitempty"`
+}
+
+func NewTIngestedFileInfo() *TIngestedFileInfo {
+	return &TIngestedFileInfo{}
+}
+
+func (p *TIngestedFileInfo) InitDefault() {
+}
+
+var TIngestedFileInfo_RemotePath_DEFAULT string
+
+func (p *TIngestedFileInfo) GetRemotePath() (v string) {
+	if !p.IsSetRemotePath() {
+		return TIngestedFileInfo_RemotePath_DEFAULT
+	}
+	return *p.RemotePath
+}
+
+var TIngestedFileInfo_Size_DEFAULT int64
+
+func (p *TIngestedFileInfo) GetSize() (v int64) {
+	if !p.IsSetSize() {
+		return TIngestedFileInfo_Size_DEFAULT
+	}
+	return *p.Size
+}
+
+var TIngestedFileInfo_SegmentIndex_DEFAULT int32
+
+func (p *TIngestedFileInfo) GetSegmentIndex() (v int32) {
+	if !p.IsSetSegmentIndex() {
+		return TIngestedFileInfo_SegmentIndex_DEFAULT
+	}
+	return *p.SegmentIndex
+}
+
+var TIngestedFileInfo_IndexId_DEFAULT int64
+
+func (p *TIngestedFileInfo) GetIndexId() (v int64) {
+	if !p.IsSetIndexId() {
+		return TIngestedFileInfo_IndexId_DEFAULT
+	}
+	return *p.IndexId
+}
+
+var TIngestedFileInfo_SuffixPath_DEFAULT string
+
+func (p *TIngestedFileInfo) GetSuffixPath() (v string) {
+	if !p.IsSetSuffixPath() {
+		return TIngestedFileInfo_SuffixPath_DEFAULT
+	}
+	return *p.SuffixPath
+}
+
+var TIngestedFileInfo_IsIndexFile_DEFAULT bool
+
+func (p *TIngestedFileInfo) GetIsIndexFile() (v bool) {
+	if !p.IsSetIsIndexFile() {
+		return TIngestedFileInfo_IsIndexFile_DEFAULT
+	}
+	return *p.IsIndexFile
+}
+
+var TIngestedFileInfo_Md5_DEFAULT string
+
+func (p *TIngestedFileInfo) GetMd5() (v string) {
+	if !p.IsSetMd5() {
+		return TIngestedFileInfo_Md5_DEFAULT
+	}
+	return *p.Md5
+}
+func (p *TIngestedFileInfo) SetRemotePath(val *string) {
+	p.RemotePath = val
+}
+func (p *TIngestedFileInfo) SetSize(val *int64) {
+	p.Size = val
+}
+func (p *TIngestedFileInfo) SetSegmentIndex(val *int32) {
+	p.SegmentIndex = val
+}
+func (p *TIngestedFileInfo) SetIndexId(val *int64) {
+	p.IndexId = val
+}
+func (p *TIngestedFileInfo) SetSuffixPath(val *string) {
+	p.SuffixPath = val
+}
+func (p *TIngestedFileInfo) SetIsIndexFile(val *bool) {
+	p.IsIndexFile = val
+}
+func (p *TIngestedFileInfo) SetMd5(val *string) {
+	p.Md5 = val
+}
+
+var fieldIDToName_TIngestedFileInfo = map[int16]string{
+	1: "remote_path",
+	2: "size",
+	3: "segment_index",
+	4: "index_id",
+	5: "suffix_path",
+	6: "is_index_file",
+	7: "md5",
+}
+
+func (p *TIngestedFileInfo) IsSetRemotePath() bool {
+	return p.RemotePath != nil
+}
+
+func (p *TIngestedFileInfo) IsSetSize() bool {
+	return p.Size != nil
+}
+
+func (p *TIngestedFileInfo) IsSetSegmentIndex() bool {
+	return p.SegmentIndex != nil
+}
+
+func (p *TIngestedFileInfo) IsSetIndexId() bool {
+	return p.IndexId != nil
+}
+
+func (p *TIngestedFileInfo) IsSetSuffixPath() bool {
+	return p.SuffixPath != nil
+}
+
+func (p *TIngestedFileInfo) IsSetIsIndexFile() bool {
+	return p.IsIndexFile != nil
+}
+
+func (p *TIngestedFileInfo) IsSetMd5() bool {
+	return p.Md5 != nil
+}
+
+func (p *TIngestedFileInfo) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I32 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_TIngestedFileInfo[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.RemotePath = _field
+	return nil
+}
+func (p *TIngestedFileInfo) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Size = _field
+	return nil
+}
+func (p *TIngestedFileInfo) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *int32
+	if v, err := iprot.ReadI32(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.SegmentIndex = _field
+	return nil
+}
+func (p *TIngestedFileInfo) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.IndexId = _field
+	return nil
+}
+func (p *TIngestedFileInfo) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.SuffixPath = _field
+	return nil
+}
+func (p *TIngestedFileInfo) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.IsIndexFile = _field
+	return nil
+}
+func (p *TIngestedFileInfo) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Md5 = _field
+	return nil
+}
+
+func (p *TIngestedFileInfo) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("TIngestedFileInfo"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetRemotePath() {
+		if err = oprot.WriteFieldBegin("remote_path", thrift.STRING, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.RemotePath); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField2(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSize() {
+		if err = oprot.WriteFieldBegin("size", thrift.I64, 2); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.Size); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSegmentIndex() {
+		if err = oprot.WriteFieldBegin("segment_index", thrift.I32, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI32(*p.SegmentIndex); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetIndexId() {
+		if err = oprot.WriteFieldBegin("index_id", thrift.I64, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.IndexId); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField5(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuffixPath() {
+		if err = oprot.WriteFieldBegin("suffix_path", thrift.STRING, 5); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.SuffixPath); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField6(oprot thrift.TProtocol) (err error) {
+	if p.IsSetIsIndexFile() {
+		if err = oprot.WriteFieldBegin("is_index_file", thrift.BOOL, 6); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.IsIndexFile); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) writeField7(oprot thrift.TProtocol) (err error) {
+	if p.IsSetMd5() {
+		if err = oprot.WriteFieldBegin("md5", thrift.STRING, 7); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Md5); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *TIngestedFileInfo) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("TIngestedFileInfo(%+v)", *p)
+
+}
+
+func (p *TIngestedFileInfo) DeepEqual(ano *TIngestedFileInfo) bool {
+	if p == ano {
+		return true
+	} else if p == nil || ano == nil {
+		return false
+	}
+	if !p.Field1DeepEqual(ano.RemotePath) {
+		return false
+	}
+	if !p.Field2DeepEqual(ano.Size) {
+		return false
+	}
+	if !p.Field3DeepEqual(ano.SegmentIndex) {
+		return false
+	}
+	if !p.Field4DeepEqual(ano.IndexId) {
+		return false
+	}
+	if !p.Field5DeepEqual(ano.SuffixPath) {
+		return false
+	}
+	if !p.Field6DeepEqual(ano.IsIndexFile) {
+		return false
+	}
+	if !p.Field7DeepEqual(ano.Md5) {
+		return false
+	}
+	return true
+}
+
+func (p *TIngestedFileInfo) Field1DeepEqual(src *string) bool {
+
+	if p.RemotePath == src {
+		return true
+	} else if p.RemotePath == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.RemotePath, *src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TIngestedFileInfo) Field2DeepEqual(src *int64) bool {
+
+	if p.Size == src {
+		return true
+	} else if p.Size == nil || src == nil {
+		return false
+	}
+	if *p.Size != *src {
+		return false
+	}
+	return true
+}
+func (p *TIngestedFileInfo) Field3DeepEqual(src *int32) bool {
+
+	if p.SegmentIndex == src {
+		return true
+	} else if p.SegmentIndex == nil || src == nil {
+		return false
+	}
+	if *p.SegmentIndex != *src {
+		return false
+	}
+	return true
+}
+func (p *TIngestedFileInfo) Field4DeepEqual(src *int64) bool {
+
+	if p.IndexId == src {
+		return true
+	} else if p.IndexId == nil || src == nil {
+		return false
+	}
+	if *p.IndexId != *src {
+		return false
+	}
+	return true
+}
+func (p *TIngestedFileInfo) Field5DeepEqual(src *string) bool {
+
+	if p.SuffixPath == src {
+		return true
+	} else if p.SuffixPath == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.SuffixPath, *src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TIngestedFileInfo) Field6DeepEqual(src *bool) bool {
+
+	if p.IsIndexFile == src {
+		return true
+	} else if p.IsIndexFile == nil || src == nil {
+		return false
+	}
+	if *p.IsIndexFile != *src {
+		return false
+	}
+	return true
+}
+func (p *TIngestedFileInfo) Field7DeepEqual(src *string) bool {
+
+	if p.Md5 == src {
+		return true
+	} else if p.Md5 == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.Md5, *src) != 0 {
+		return false
+	}
+	return true
+}
+
 type TIngestBinlogRequest struct {
-	TxnId          *int64           `thrift:"txn_id,1,optional" frugal:"1,optional,i64" json:"txn_id,omitempty"`
-	RemoteTabletId *int64           `thrift:"remote_tablet_id,2,optional" frugal:"2,optional,i64" json:"remote_tablet_id,omitempty"`
-	BinlogVersion  *int64           `thrift:"binlog_version,3,optional" frugal:"3,optional,i64" json:"binlog_version,omitempty"`
-	RemoteHost     *string          `thrift:"remote_host,4,optional" frugal:"4,optional,string" json:"remote_host,omitempty"`
-	RemotePort     *string          `thrift:"remote_port,5,optional" frugal:"5,optional,string" json:"remote_port,omitempty"`
-	PartitionId    *int64           `thrift:"partition_id,6,optional" frugal:"6,optional,i64" json:"partition_id,omitempty"`
-	LocalTabletId  *int64           `thrift:"local_tablet_id,7,optional" frugal:"7,optional,i64" json:"local_tablet_id,omitempty"`
-	LoadId         *types.TUniqueId `thrift:"load_id,8,optional" frugal:"8,optional,types.TUniqueId" json:"load_id,omitempty"`
+	TxnId                 *int64                      `thrift:"txn_id,1,optional" frugal:"1,optional,i64" json:"txn_id,omitempty"`
+	RemoteTabletId        *int64                      `thrift:"remote_tablet_id,2,optional" frugal:"2,optional,i64" json:"remote_tablet_id,omitempty"`
+	BinlogVersion         *int64                      `thrift:"binlog_version,3,optional" frugal:"3,optional,i64" json:"binlog_version,omitempty"`
+	RemoteHost            *string                     `thrift:"remote_host,4,optional" frugal:"4,optional,string" json:"remote_host,omitempty"`
+	RemotePort            *string                     `thrift:"remote_port,5,optional" frugal:"5,optional,string" json:"remote_port,omitempty"`
+	PartitionId           *int64                      `thrift:"partition_id,6,optional" frugal:"6,optional,i64" json:"partition_id,omitempty"`
+	LocalTabletId         *int64                      `thrift:"local_tablet_id,7,optional" frugal:"7,optional,i64" json:"local_tablet_id,omitempty"`
+	LoadId                *types.TUniqueId            `thrift:"load_id,8,optional" frugal:"8,optional,types.TUniqueId" json:"load_id,omitempty"`
+	SingleReplicaDownload *bool                       `thrift:"single_replica_download,9,optional" frugal:"9,optional,bool" json:"single_replica_download,omitempty"`
+	FollowerReplicas      []*TReplicaDistributionInfo `thrift:"follower_replicas,10,optional" frugal:"10,optional,list<TReplicaDistributionInfo>" json:"follower_replicas,omitempty"`
+	FetchFromPeer         *bool                       `thrift:"fetch_from_peer,11,optional" frugal:"11,optional,bool" json:"fetch_from_peer,omitempty"`
+	PeerHost              *string                     `thrift:"peer_host,12,optional" frugal:"12,optional,string" json:"peer_host,omitempty"`
+	PeerHttpPort          *string                     `thrift:"peer_http_port,13,optional" frugal:"13,optional,string" json:"peer_http_port,omitempty"`
+	PeerToken             *string                     `thrift:"peer_token,14,optional" frugal:"14,optional,string" json:"peer_token,omitempty"`
+	RowsetMeta            []byte                      `thrift:"rowset_meta,15,optional" frugal:"15,optional,binary" json:"rowset_meta,omitempty"`
+	Files                 []*TIngestedFileInfo        `thrift:"files,16,optional" frugal:"16,optional,list<TIngestedFileInfo>" json:"files,omitempty"`
 }
 
 func NewTIngestBinlogRequest() *TIngestBinlogRequest {
@@ -10453,6 +11420,78 @@ func (p *TIngestBinlogRequest) GetLoadId() (v *types.TUniqueId) {
 	}
 	return p.LoadId
 }
+
+var TIngestBinlogRequest_SingleReplicaDownload_DEFAULT bool
+
+func (p *TIngestBinlogRequest) GetSingleReplicaDownload() (v bool) {
+	if !p.IsSetSingleReplicaDownload() {
+		return TIngestBinlogRequest_SingleReplicaDownload_DEFAULT
+	}
+	return *p.SingleReplicaDownload
+}
+
+var TIngestBinlogRequest_FollowerReplicas_DEFAULT []*TReplicaDistributionInfo
+
+func (p *TIngestBinlogRequest) GetFollowerReplicas() (v []*TReplicaDistributionInfo) {
+	if !p.IsSetFollowerReplicas() {
+		return TIngestBinlogRequest_FollowerReplicas_DEFAULT
+	}
+	return p.FollowerReplicas
+}
+
+var TIngestBinlogRequest_FetchFromPeer_DEFAULT bool
+
+func (p *TIngestBinlogRequest) GetFetchFromPeer() (v bool) {
+	if !p.IsSetFetchFromPeer() {
+		return TIngestBinlogRequest_FetchFromPeer_DEFAULT
+	}
+	return *p.FetchFromPeer
+}
+
+var TIngestBinlogRequest_PeerHost_DEFAULT string
+
+func (p *TIngestBinlogRequest) GetPeerHost() (v string) {
+	if !p.IsSetPeerHost() {
+		return TIngestBinlogRequest_PeerHost_DEFAULT
+	}
+	return *p.PeerHost
+}
+
+var TIngestBinlogRequest_PeerHttpPort_DEFAULT string
+
+func (p *TIngestBinlogRequest) GetPeerHttpPort() (v string) {
+	if !p.IsSetPeerHttpPort() {
+		return TIngestBinlogRequest_PeerHttpPort_DEFAULT
+	}
+	return *p.PeerHttpPort
+}
+
+var TIngestBinlogRequest_PeerToken_DEFAULT string
+
+func (p *TIngestBinlogRequest) GetPeerToken() (v string) {
+	if !p.IsSetPeerToken() {
+		return TIngestBinlogRequest_PeerToken_DEFAULT
+	}
+	return *p.PeerToken
+}
+
+var TIngestBinlogRequest_RowsetMeta_DEFAULT []byte
+
+func (p *TIngestBinlogRequest) GetRowsetMeta() (v []byte) {
+	if !p.IsSetRowsetMeta() {
+		return TIngestBinlogRequest_RowsetMeta_DEFAULT
+	}
+	return p.RowsetMeta
+}
+
+var TIngestBinlogRequest_Files_DEFAULT []*TIngestedFileInfo
+
+func (p *TIngestBinlogRequest) GetFiles() (v []*TIngestedFileInfo) {
+	if !p.IsSetFiles() {
+		return TIngestBinlogRequest_Files_DEFAULT
+	}
+	return p.Files
+}
 func (p *TIngestBinlogRequest) SetTxnId(val *int64) {
 	p.TxnId = val
 }
@@ -10477,16 +11516,48 @@ func (p *TIngestBinlogRequest) SetLocalTabletId(val *int64) {
 func (p *TIngestBinlogRequest) SetLoadId(val *types.TUniqueId) {
 	p.LoadId = val
 }
+func (p *TIngestBinlogRequest) SetSingleReplicaDownload(val *bool) {
+	p.SingleReplicaDownload = val
+}
+func (p *TIngestBinlogRequest) SetFollowerReplicas(val []*TReplicaDistributionInfo) {
+	p.FollowerReplicas = val
+}
+func (p *TIngestBinlogRequest) SetFetchFromPeer(val *bool) {
+	p.FetchFromPeer = val
+}
+func (p *TIngestBinlogRequest) SetPeerHost(val *string) {
+	p.PeerHost = val
+}
+func (p *TIngestBinlogRequest) SetPeerHttpPort(val *string) {
+	p.PeerHttpPort = val
+}
+func (p *TIngestBinlogRequest) SetPeerToken(val *string) {
+	p.PeerToken = val
+}
+func (p *TIngestBinlogRequest) SetRowsetMeta(val []byte) {
+	p.RowsetMeta = val
+}
+func (p *TIngestBinlogRequest) SetFiles(val []*TIngestedFileInfo) {
+	p.Files = val
+}
 
 var fieldIDToName_TIngestBinlogRequest = map[int16]string{
-	1: "txn_id",
-	2: "remote_tablet_id",
-	3: "binlog_version",
-	4: "remote_host",
-	5: "remote_port",
-	6: "partition_id",
-	7: "local_tablet_id",
-	8: "load_id",
+	1:  "txn_id",
+	2:  "remote_tablet_id",
+	3:  "binlog_version",
+	4:  "remote_host",
+	5:  "remote_port",
+	6:  "partition_id",
+	7:  "local_tablet_id",
+	8:  "load_id",
+	9:  "single_replica_download",
+	10: "follower_replicas",
+	11: "fetch_from_peer",
+	12: "peer_host",
+	13: "peer_http_port",
+	14: "peer_token",
+	15: "rowset_meta",
+	16: "files",
 }
 
 func (p *TIngestBinlogRequest) IsSetTxnId() bool {
@@ -10519,6 +11590,38 @@ func (p *TIngestBinlogRequest) IsSetLocalTabletId() bool {
 
 func (p *TIngestBinlogRequest) IsSetLoadId() bool {
 	return p.LoadId != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetSingleReplicaDownload() bool {
+	return p.SingleReplicaDownload != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetFollowerReplicas() bool {
+	return p.FollowerReplicas != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetFetchFromPeer() bool {
+	return p.FetchFromPeer != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetPeerHost() bool {
+	return p.PeerHost != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetPeerHttpPort() bool {
+	return p.PeerHttpPort != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetPeerToken() bool {
+	return p.PeerToken != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetRowsetMeta() bool {
+	return p.RowsetMeta != nil
+}
+
+func (p *TIngestBinlogRequest) IsSetFiles() bool {
+	return p.Files != nil
 }
 
 func (p *TIngestBinlogRequest) Read(iprot thrift.TProtocol) (err error) {
@@ -10599,6 +11702,70 @@ func (p *TIngestBinlogRequest) Read(iprot thrift.TProtocol) (err error) {
 		case 8:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 9:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField9(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 10:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField10(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 14:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 15:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField15(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 16:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField16(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -10718,6 +11885,118 @@ func (p *TIngestBinlogRequest) ReadField8(iprot thrift.TProtocol) error {
 	p.LoadId = _field
 	return nil
 }
+func (p *TIngestBinlogRequest) ReadField9(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.SingleReplicaDownload = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField10(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*TReplicaDistributionInfo, 0, size)
+	values := make([]TReplicaDistributionInfo, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.FollowerReplicas = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field *bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.FetchFromPeer = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField12(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.PeerHost = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField13(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.PeerHttpPort = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField14(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.PeerToken = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField15(iprot thrift.TProtocol) error {
+
+	var _field []byte
+	if v, err := iprot.ReadBinary(); err != nil {
+		return err
+	} else {
+		_field = []byte(v)
+	}
+	p.RowsetMeta = _field
+	return nil
+}
+func (p *TIngestBinlogRequest) ReadField16(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*TIngestedFileInfo, 0, size)
+	values := make([]TIngestedFileInfo, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Files = _field
+	return nil
+}
 
 func (p *TIngestBinlogRequest) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -10755,6 +12034,38 @@ func (p *TIngestBinlogRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField8(oprot); err != nil {
 			fieldId = 8
+			goto WriteFieldError
+		}
+		if err = p.writeField9(oprot); err != nil {
+			fieldId = 9
+			goto WriteFieldError
+		}
+		if err = p.writeField10(oprot); err != nil {
+			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
+			goto WriteFieldError
+		}
+		if err = p.writeField14(oprot); err != nil {
+			fieldId = 14
+			goto WriteFieldError
+		}
+		if err = p.writeField15(oprot); err != nil {
+			fieldId = 15
+			goto WriteFieldError
+		}
+		if err = p.writeField16(oprot); err != nil {
+			fieldId = 16
 			goto WriteFieldError
 		}
 	}
@@ -10927,6 +12238,174 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
 }
 
+func (p *TIngestBinlogRequest) writeField9(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSingleReplicaDownload() {
+		if err = oprot.WriteFieldBegin("single_replica_download", thrift.BOOL, 9); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.SingleReplicaDownload); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 9 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField10(oprot thrift.TProtocol) (err error) {
+	if p.IsSetFollowerReplicas() {
+		if err = oprot.WriteFieldBegin("follower_replicas", thrift.LIST, 10); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.FollowerReplicas)); err != nil {
+			return err
+		}
+		for _, v := range p.FollowerReplicas {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField11(oprot thrift.TProtocol) (err error) {
+	if p.IsSetFetchFromPeer() {
+		if err = oprot.WriteFieldBegin("fetch_from_peer", thrift.BOOL, 11); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBool(*p.FetchFromPeer); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField12(oprot thrift.TProtocol) (err error) {
+	if p.IsSetPeerHost() {
+		if err = oprot.WriteFieldBegin("peer_host", thrift.STRING, 12); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.PeerHost); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField13(oprot thrift.TProtocol) (err error) {
+	if p.IsSetPeerHttpPort() {
+		if err = oprot.WriteFieldBegin("peer_http_port", thrift.STRING, 13); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.PeerHttpPort); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 13 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField14(oprot thrift.TProtocol) (err error) {
+	if p.IsSetPeerToken() {
+		if err = oprot.WriteFieldBegin("peer_token", thrift.STRING, 14); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.PeerToken); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 14 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField15(oprot thrift.TProtocol) (err error) {
+	if p.IsSetRowsetMeta() {
+		if err = oprot.WriteFieldBegin("rowset_meta", thrift.STRING, 15); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteBinary([]byte(p.RowsetMeta)); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 15 end error: ", p), err)
+}
+
+func (p *TIngestBinlogRequest) writeField16(oprot thrift.TProtocol) (err error) {
+	if p.IsSetFiles() {
+		if err = oprot.WriteFieldBegin("files", thrift.LIST, 16); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Files)); err != nil {
+			return err
+		}
+		for _, v := range p.Files {
+			if err := v.Write(oprot); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 16 end error: ", p), err)
+}
+
 func (p *TIngestBinlogRequest) String() string {
 	if p == nil {
 		return "<nil>"
@@ -10963,6 +12442,30 @@ func (p *TIngestBinlogRequest) DeepEqual(ano *TIngestBinlogRequest) bool {
 		return false
 	}
 	if !p.Field8DeepEqual(ano.LoadId) {
+		return false
+	}
+	if !p.Field9DeepEqual(ano.SingleReplicaDownload) {
+		return false
+	}
+	if !p.Field10DeepEqual(ano.FollowerReplicas) {
+		return false
+	}
+	if !p.Field11DeepEqual(ano.FetchFromPeer) {
+		return false
+	}
+	if !p.Field12DeepEqual(ano.PeerHost) {
+		return false
+	}
+	if !p.Field13DeepEqual(ano.PeerHttpPort) {
+		return false
+	}
+	if !p.Field14DeepEqual(ano.PeerToken) {
+		return false
+	}
+	if !p.Field15DeepEqual(ano.RowsetMeta) {
+		return false
+	}
+	if !p.Field16DeepEqual(ano.Files) {
 		return false
 	}
 	return true
@@ -11059,10 +12562,105 @@ func (p *TIngestBinlogRequest) Field8DeepEqual(src *types.TUniqueId) bool {
 	}
 	return true
 }
+func (p *TIngestBinlogRequest) Field9DeepEqual(src *bool) bool {
+
+	if p.SingleReplicaDownload == src {
+		return true
+	} else if p.SingleReplicaDownload == nil || src == nil {
+		return false
+	}
+	if *p.SingleReplicaDownload != *src {
+		return false
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field10DeepEqual(src []*TReplicaDistributionInfo) bool {
+
+	if len(p.FollowerReplicas) != len(src) {
+		return false
+	}
+	for i, v := range p.FollowerReplicas {
+		_src := src[i]
+		if !v.DeepEqual(_src) {
+			return false
+		}
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field11DeepEqual(src *bool) bool {
+
+	if p.FetchFromPeer == src {
+		return true
+	} else if p.FetchFromPeer == nil || src == nil {
+		return false
+	}
+	if *p.FetchFromPeer != *src {
+		return false
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field12DeepEqual(src *string) bool {
+
+	if p.PeerHost == src {
+		return true
+	} else if p.PeerHost == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.PeerHost, *src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field13DeepEqual(src *string) bool {
+
+	if p.PeerHttpPort == src {
+		return true
+	} else if p.PeerHttpPort == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.PeerHttpPort, *src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field14DeepEqual(src *string) bool {
+
+	if p.PeerToken == src {
+		return true
+	} else if p.PeerToken == nil || src == nil {
+		return false
+	}
+	if strings.Compare(*p.PeerToken, *src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field15DeepEqual(src []byte) bool {
+
+	if bytes.Compare(p.RowsetMeta, src) != 0 {
+		return false
+	}
+	return true
+}
+func (p *TIngestBinlogRequest) Field16DeepEqual(src []*TIngestedFileInfo) bool {
+
+	if len(p.Files) != len(src) {
+		return false
+	}
+	for i, v := range p.Files {
+		_src := src[i]
+		if !v.DeepEqual(_src) {
+			return false
+		}
+	}
+	return true
+}
 
 type TIngestBinlogResult_ struct {
-	Status  *status.TStatus `thrift:"status,1,optional" frugal:"1,optional,status.TStatus" json:"status,omitempty"`
-	IsAsync *bool           `thrift:"is_async,2,optional" frugal:"2,optional,bool" json:"is_async,omitempty"`
+	Status                   *status.TStatus `thrift:"status,1,optional" frugal:"1,optional,status.TStatus" json:"status,omitempty"`
+	IsAsync                  *bool           `thrift:"is_async,2,optional" frugal:"2,optional,bool" json:"is_async,omitempty"`
+	SuccessReplicaBackendIds []int64         `thrift:"success_replica_backend_ids,3,optional" frugal:"3,optional,list<i64>" json:"success_replica_backend_ids,omitempty"`
+	FailedReplicaBackendIds  []int64         `thrift:"failed_replica_backend_ids,4,optional" frugal:"4,optional,list<i64>" json:"failed_replica_backend_ids,omitempty"`
 }
 
 func NewTIngestBinlogResult_() *TIngestBinlogResult_ {
@@ -11089,16 +12687,42 @@ func (p *TIngestBinlogResult_) GetIsAsync() (v bool) {
 	}
 	return *p.IsAsync
 }
+
+var TIngestBinlogResult__SuccessReplicaBackendIds_DEFAULT []int64
+
+func (p *TIngestBinlogResult_) GetSuccessReplicaBackendIds() (v []int64) {
+	if !p.IsSetSuccessReplicaBackendIds() {
+		return TIngestBinlogResult__SuccessReplicaBackendIds_DEFAULT
+	}
+	return p.SuccessReplicaBackendIds
+}
+
+var TIngestBinlogResult__FailedReplicaBackendIds_DEFAULT []int64
+
+func (p *TIngestBinlogResult_) GetFailedReplicaBackendIds() (v []int64) {
+	if !p.IsSetFailedReplicaBackendIds() {
+		return TIngestBinlogResult__FailedReplicaBackendIds_DEFAULT
+	}
+	return p.FailedReplicaBackendIds
+}
 func (p *TIngestBinlogResult_) SetStatus(val *status.TStatus) {
 	p.Status = val
 }
 func (p *TIngestBinlogResult_) SetIsAsync(val *bool) {
 	p.IsAsync = val
 }
+func (p *TIngestBinlogResult_) SetSuccessReplicaBackendIds(val []int64) {
+	p.SuccessReplicaBackendIds = val
+}
+func (p *TIngestBinlogResult_) SetFailedReplicaBackendIds(val []int64) {
+	p.FailedReplicaBackendIds = val
+}
 
 var fieldIDToName_TIngestBinlogResult_ = map[int16]string{
 	1: "status",
 	2: "is_async",
+	3: "success_replica_backend_ids",
+	4: "failed_replica_backend_ids",
 }
 
 func (p *TIngestBinlogResult_) IsSetStatus() bool {
@@ -11107,6 +12731,14 @@ func (p *TIngestBinlogResult_) IsSetStatus() bool {
 
 func (p *TIngestBinlogResult_) IsSetIsAsync() bool {
 	return p.IsAsync != nil
+}
+
+func (p *TIngestBinlogResult_) IsSetSuccessReplicaBackendIds() bool {
+	return p.SuccessReplicaBackendIds != nil
+}
+
+func (p *TIngestBinlogResult_) IsSetFailedReplicaBackendIds() bool {
+	return p.FailedReplicaBackendIds != nil
 }
 
 func (p *TIngestBinlogResult_) Read(iprot thrift.TProtocol) (err error) {
@@ -11139,6 +12771,22 @@ func (p *TIngestBinlogResult_) Read(iprot thrift.TProtocol) (err error) {
 		case 2:
 			if fieldTypeId == thrift.BOOL {
 				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField4(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -11192,6 +12840,52 @@ func (p *TIngestBinlogResult_) ReadField2(iprot thrift.TProtocol) error {
 	p.IsAsync = _field
 	return nil
 }
+func (p *TIngestBinlogResult_) ReadField3(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]int64, 0, size)
+	for i := 0; i < size; i++ {
+
+		var _elem int64
+		if v, err := iprot.ReadI64(); err != nil {
+			return err
+		} else {
+			_elem = v
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.SuccessReplicaBackendIds = _field
+	return nil
+}
+func (p *TIngestBinlogResult_) ReadField4(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]int64, 0, size)
+	for i := 0; i < size; i++ {
+
+		var _elem int64
+		if v, err := iprot.ReadI64(); err != nil {
+			return err
+		} else {
+			_elem = v
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.FailedReplicaBackendIds = _field
+	return nil
+}
 
 func (p *TIngestBinlogResult_) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -11205,6 +12899,14 @@ func (p *TIngestBinlogResult_) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField2(oprot); err != nil {
 			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
 			goto WriteFieldError
 		}
 	}
@@ -11263,6 +12965,60 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
 }
 
+func (p *TIngestBinlogResult_) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccessReplicaBackendIds() {
+		if err = oprot.WriteFieldBegin("success_replica_backend_ids", thrift.LIST, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.I64, len(p.SuccessReplicaBackendIds)); err != nil {
+			return err
+		}
+		for _, v := range p.SuccessReplicaBackendIds {
+			if err := oprot.WriteI64(v); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *TIngestBinlogResult_) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetFailedReplicaBackendIds() {
+		if err = oprot.WriteFieldBegin("failed_replica_backend_ids", thrift.LIST, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteListBegin(thrift.I64, len(p.FailedReplicaBackendIds)); err != nil {
+			return err
+		}
+		for _, v := range p.FailedReplicaBackendIds {
+			if err := oprot.WriteI64(v); err != nil {
+				return err
+			}
+		}
+		if err := oprot.WriteListEnd(); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
 func (p *TIngestBinlogResult_) String() string {
 	if p == nil {
 		return "<nil>"
@@ -11281,6 +13037,12 @@ func (p *TIngestBinlogResult_) DeepEqual(ano *TIngestBinlogResult_) bool {
 		return false
 	}
 	if !p.Field2DeepEqual(ano.IsAsync) {
+		return false
+	}
+	if !p.Field3DeepEqual(ano.SuccessReplicaBackendIds) {
+		return false
+	}
+	if !p.Field4DeepEqual(ano.FailedReplicaBackendIds) {
 		return false
 	}
 	return true
@@ -11302,6 +13064,32 @@ func (p *TIngestBinlogResult_) Field2DeepEqual(src *bool) bool {
 	}
 	if *p.IsAsync != *src {
 		return false
+	}
+	return true
+}
+func (p *TIngestBinlogResult_) Field3DeepEqual(src []int64) bool {
+
+	if len(p.SuccessReplicaBackendIds) != len(src) {
+		return false
+	}
+	for i, v := range p.SuccessReplicaBackendIds {
+		_src := src[i]
+		if v != _src {
+			return false
+		}
+	}
+	return true
+}
+func (p *TIngestBinlogResult_) Field4DeepEqual(src []int64) bool {
+
+	if len(p.FailedReplicaBackendIds) != len(src) {
+		return false
+	}
+	for i, v := range p.FailedReplicaBackendIds {
+		_src := src[i]
+		if v != _src {
+			return false
+		}
 	}
 	return true
 }

@@ -80,9 +80,12 @@ var (
 	featureSeperatedHandles               bool
 	featureEnableSnapshotCompress         bool
 	featureOverrideReplicationNumInternal bool
+	featureSingleReplicaIngestBinlog      bool
 
 	flagBinlogBatchSize                      int64
 	flagMaxBackupRestoreConcurrencyPerTarget int64
+	flagSingleReplicaIngestMaxRetries        int
+	flagSingleReplicaIngestRetryInterval     time.Duration
 
 	ErrMaterializedViewTable = xerror.NewWithoutStack(xerror.Meta, "Not support table type: materialized view")
 )
@@ -128,10 +131,62 @@ func init() {
 		"enable snapshot compress")
 	flag.BoolVar(&featureOverrideReplicationNumInternal, "feature_override_replication_num", true,
 		"enable override replication_num for downstream cluster")
+	flag.BoolVar(&featureSingleReplicaIngestBinlog, "feature_single_replica_ingest_binlog", false,
+		"enable single replica ingest binlog to reduce cross-cluster traffic")
 
 	flag.Int64Var(&flagBinlogBatchSize, "binlog_batch_size", 16, "the max num of binlogs to get in a batch")
 	flag.Int64Var(&flagMaxBackupRestoreConcurrencyPerTarget, "max_backup_restore_concurrency_per_target", 10,
 		"the max concurrency of backup or restore jobs per upstream or downstream target, 0 or negative means no limit. Only for full sync.")
+	flag.IntVar(&flagSingleReplicaIngestMaxRetries, "single_replica_ingest_max_retries", 3,
+		"the max retry times for single replica ingest binlog before fallback to multi-replica path")
+	flag.DurationVar(&flagSingleReplicaIngestRetryInterval, "single_replica_ingest_retry_interval", time.Second,
+		"the interval between single replica ingest binlog retries")
+}
+
+// How long to remember that the destination cluster does not support single-replica
+// ingest. After this TTL the syncer will re-probe instead of permanently falling back
+// to the multi-replica path, so that a dest cluster upgrade or config change can be
+// picked up without restarting the job.
+const singleReplicaFallbackTTL = 10 * time.Minute
+
+// fallbackCache stores a boolean decision with a TTL. It is used to avoid retrying
+// single-replica ingest on every tablet when the destination cluster is known to not
+// support it (old BE or async ingest mode), while still allowing the decision to expire.
+type fallbackCache struct {
+	mu       sync.Mutex
+	fallback bool
+	expireAt time.Time
+	ttl      time.Duration
+}
+
+func newFallbackCache(ttl time.Duration) *fallbackCache {
+	return &fallbackCache{ttl: ttl}
+}
+
+func (c *fallbackCache) Load() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.fallback {
+		return false
+	}
+	if time.Now().After(c.expireAt) {
+		c.fallback = false
+		return false
+	}
+	return true
+}
+
+func (c *fallbackCache) Store() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fallback = true
+	c.expireAt = time.Now().Add(c.ttl)
+}
+
+func (c *fallbackCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fallback = false
 }
 
 // FeatureOverrideReplicationNum returns whether the feature is enabled
@@ -241,6 +296,13 @@ type Job struct {
 	concurrencyManager *rpc.ConcurrencyManager `json:"-"`
 	pipelineCtx        *JobPipelineContext     `json:"-"`
 
+	// Once set, the destination cluster is known to not support single-replica
+	// ingest (old BE or async ingest mode), so we skip the retry loop and fall
+	// back to the multi-replica path directly for the rest of the job.
+	// The decision expires after singleReplicaFallbackTTL so that cluster upgrades
+	// or config changes are picked up without restarting the job.
+	singleReplicaFallback *fallbackCache `json:"-"`
+
 	lock sync.Mutex `json:"-"`
 
 	// Current running backup/restore names for cancellation on deletion
@@ -304,7 +366,8 @@ func NewJobFromService(name string, ctx context.Context) (*Job, error) {
 		db:       jobContext.Db,
 		stop:     make(chan struct{}),
 
-		concurrencyManager: rpc.NewConcurrencyManager(),
+		concurrencyManager:    rpc.NewConcurrencyManager(),
+		singleReplicaFallback: newFallbackCache(singleReplicaFallbackTTL),
 	}
 
 	// set and validate replication number policy
@@ -361,6 +424,9 @@ func NewJobFromJson(jsonData string, db storage.DB, factory *Factory) (*Job, err
 	job.jobFactory = NewJobFactory()
 	job.concurrencyManager = rpc.NewConcurrencyManager()
 	job.Extra.InterruptCh = make(chan any, 1)
+	if job.singleReplicaFallback == nil {
+		job.singleReplicaFallback = newFallbackCache(singleReplicaFallbackTTL)
+	}
 	return &job, nil
 }
 
