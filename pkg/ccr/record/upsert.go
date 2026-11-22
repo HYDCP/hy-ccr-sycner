@@ -29,6 +29,9 @@ type PartitionRecord struct {
 	Version int64  `json:"version"`
 	IsTemp  bool   `json:"isTempPartition"`
 	Stid    int64  `json:"stid"`
+	// restore reuse: the state token of the source partition before and after this version
+	PrevToken string `json:"ptk,omitempty"`
+	Token     string `json:"tk,omitempty"`
 }
 
 func (p PartitionRecord) String() string {

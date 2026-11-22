@@ -332,6 +332,10 @@ type IngestBinlogJob struct {
 	*commitInfosCollector
 	*subTxnInfosCollector
 
+	// restore reuse: the source state tokens of the target partitions ingested
+	ccrSources     []*festruct.TCcrPartitionSource
+	ccrSourcesLock sync.Mutex
+
 	err     error
 	errLock sync.RWMutex
 
@@ -378,6 +382,34 @@ func (j *IngestBinlogJob) GetDestBackend(destBackendId int64) *base.Backend {
 
 func (j *IngestBinlogJob) GetTabletCommitInfos() []*ttypes.TTabletCommitInfo {
 	return j.commitInfos
+}
+
+// CcrPartitionSources returns the source state tokens of the target partitions this job ingests into.
+func (j *IngestBinlogJob) CcrPartitionSources() []*festruct.TCcrPartitionSource {
+	j.ccrSourcesLock.Lock()
+	defer j.ccrSourcesLock.Unlock()
+	return j.ccrSources
+}
+
+func (j *IngestBinlogJob) addCcrPartitionSource(destPartitionId int64, partitionRecord record.PartitionRecord) {
+	// a transaction of sub transactions gets no token on the target, see DatabaseTransactionMgr#assignStateTokens
+	if partitionRecord.Stid > 0 || partitionRecord.Token == "" || partitionRecord.PrevToken == "" {
+		return
+	}
+	src := festruct.NewTCcrPartitionSource()
+	targetId := destPartitionId
+	srcId := partitionRecord.Id
+	srcVersion := partitionRecord.Version
+	prevToken := partitionRecord.PrevToken
+	token := partitionRecord.Token
+	src.TargetPartitionId = &targetId
+	src.SrcPartitionId = &srcId
+	src.SrcVersion = &srcVersion
+	src.PrevToken = &prevToken
+	src.Token = &token
+	j.ccrSourcesLock.Lock()
+	defer j.ccrSourcesLock.Unlock()
+	j.ccrSources = append(j.ccrSources, src)
 }
 
 func (j *IngestBinlogJob) GetSubTxnInfos() []*festruct.TSubTxnInfo {
@@ -499,6 +531,7 @@ func (j *IngestBinlogJob) preparePartition(srcTableId, destTableId int64,
 		j.setError(err)
 		return
 	}
+	j.addCcrPartitionSource(destPartitionId, partitionRecord)
 
 	// Step 1: check index id
 	srcIndexIdMap, err := j.srcMeta.GetIndexIdMap(srcTableId, srcPartitionId)

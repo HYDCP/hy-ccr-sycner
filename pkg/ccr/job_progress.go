@@ -207,6 +207,10 @@ type JobProgress struct {
 	TableAliases map[string]string `json:"table_aliases,omitempty"`
 	PrevTxnId    int64             `json:"prev_txn_id,omitempty"`
 
+	// restore reuse: the resync of the not continuous partitions of the committed txn, persisted with the commit and
+	// cleared when it is started, so that a restart in between still starts it
+	CcrResync *ccrResync `json:"ccr_resync,omitempty"`
+
 	// The shadow indexes of the pending schema changes
 	ShadowIndexes map[int64]int64 `json:"shadow_index_map,omitempty"`
 

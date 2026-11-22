@@ -23113,6 +23113,343 @@ func (p *TLoadTxnCommitResult_) field1Length() int {
 	return l
 }
 
+func (p *TCcrPartitionSource) FastRead(buf []byte) (int, error) {
+	var err error
+	var offset int
+	var l int
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	_, l, err = bthrift.Binary.ReadStructBegin(buf)
+	offset += l
+	if err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, l, err = bthrift.Binary.ReadFieldBegin(buf[offset:])
+		offset += l
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				l, err = p.FastReadField1(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				l, err = p.FastReadField2(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		case 3:
+			if fieldTypeId == thrift.I64 {
+				l, err = p.FastReadField3(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		case 4:
+			if fieldTypeId == thrift.STRING {
+				l, err = p.FastReadField4(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				l, err = p.FastReadField5(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		default:
+			l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+			offset += l
+			if err != nil {
+				goto SkipFieldError
+			}
+		}
+
+		l, err = bthrift.Binary.ReadFieldEnd(buf[offset:])
+		offset += l
+		if err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	l, err = bthrift.Binary.ReadStructEnd(buf[offset:])
+	offset += l
+	if err != nil {
+		goto ReadStructEndError
+	}
+
+	return offset, nil
+ReadStructBeginError:
+	return offset, thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return offset, thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return offset, thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_TCcrPartitionSource[fieldId]), err)
+SkipFieldError:
+	return offset, thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+ReadFieldEndError:
+	return offset, thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return offset, thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *TCcrPartitionSource) FastReadField1(buf []byte) (int, error) {
+	offset := 0
+
+	if v, l, err := bthrift.Binary.ReadI64(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+		p.TargetPartitionId = &v
+
+	}
+	return offset, nil
+}
+
+func (p *TCcrPartitionSource) FastReadField2(buf []byte) (int, error) {
+	offset := 0
+
+	if v, l, err := bthrift.Binary.ReadI64(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+		p.SrcPartitionId = &v
+
+	}
+	return offset, nil
+}
+
+func (p *TCcrPartitionSource) FastReadField3(buf []byte) (int, error) {
+	offset := 0
+
+	if v, l, err := bthrift.Binary.ReadI64(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+		p.SrcVersion = &v
+
+	}
+	return offset, nil
+}
+
+func (p *TCcrPartitionSource) FastReadField4(buf []byte) (int, error) {
+	offset := 0
+
+	if v, l, err := bthrift.Binary.ReadString(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+		p.PrevToken = &v
+
+	}
+	return offset, nil
+}
+
+func (p *TCcrPartitionSource) FastReadField5(buf []byte) (int, error) {
+	offset := 0
+
+	if v, l, err := bthrift.Binary.ReadString(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+		p.Token = &v
+
+	}
+	return offset, nil
+}
+
+// for compatibility
+func (p *TCcrPartitionSource) FastWrite(buf []byte) int {
+	return 0
+}
+
+func (p *TCcrPartitionSource) FastWriteNocopy(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	offset += bthrift.Binary.WriteStructBegin(buf[offset:], "TCcrPartitionSource")
+	if p != nil {
+		offset += p.fastWriteField1(buf[offset:], binaryWriter)
+		offset += p.fastWriteField2(buf[offset:], binaryWriter)
+		offset += p.fastWriteField3(buf[offset:], binaryWriter)
+		offset += p.fastWriteField4(buf[offset:], binaryWriter)
+		offset += p.fastWriteField5(buf[offset:], binaryWriter)
+	}
+	offset += bthrift.Binary.WriteFieldStop(buf[offset:])
+	offset += bthrift.Binary.WriteStructEnd(buf[offset:])
+	return offset
+}
+
+func (p *TCcrPartitionSource) BLength() int {
+	l := 0
+	l += bthrift.Binary.StructBeginLength("TCcrPartitionSource")
+	if p != nil {
+		l += p.field1Length()
+		l += p.field2Length()
+		l += p.field3Length()
+		l += p.field4Length()
+		l += p.field5Length()
+	}
+	l += bthrift.Binary.FieldStopLength()
+	l += bthrift.Binary.StructEndLength()
+	return l
+}
+
+func (p *TCcrPartitionSource) fastWriteField1(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetTargetPartitionId() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "target_partition_id", thrift.I64, 1)
+		offset += bthrift.Binary.WriteI64(buf[offset:], *p.TargetPartitionId)
+
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
+func (p *TCcrPartitionSource) fastWriteField2(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetSrcPartitionId() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "src_partition_id", thrift.I64, 2)
+		offset += bthrift.Binary.WriteI64(buf[offset:], *p.SrcPartitionId)
+
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
+func (p *TCcrPartitionSource) fastWriteField3(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetSrcVersion() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "src_version", thrift.I64, 3)
+		offset += bthrift.Binary.WriteI64(buf[offset:], *p.SrcVersion)
+
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
+func (p *TCcrPartitionSource) fastWriteField4(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetPrevToken() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "prev_token", thrift.STRING, 4)
+		offset += bthrift.Binary.WriteStringNocopy(buf[offset:], binaryWriter, *p.PrevToken)
+
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
+func (p *TCcrPartitionSource) fastWriteField5(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetToken() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "token", thrift.STRING, 5)
+		offset += bthrift.Binary.WriteStringNocopy(buf[offset:], binaryWriter, *p.Token)
+
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
+func (p *TCcrPartitionSource) field1Length() int {
+	l := 0
+	if p.IsSetTargetPartitionId() {
+		l += bthrift.Binary.FieldBeginLength("target_partition_id", thrift.I64, 1)
+		l += bthrift.Binary.I64Length(*p.TargetPartitionId)
+
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
+func (p *TCcrPartitionSource) field2Length() int {
+	l := 0
+	if p.IsSetSrcPartitionId() {
+		l += bthrift.Binary.FieldBeginLength("src_partition_id", thrift.I64, 2)
+		l += bthrift.Binary.I64Length(*p.SrcPartitionId)
+
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
+func (p *TCcrPartitionSource) field3Length() int {
+	l := 0
+	if p.IsSetSrcVersion() {
+		l += bthrift.Binary.FieldBeginLength("src_version", thrift.I64, 3)
+		l += bthrift.Binary.I64Length(*p.SrcVersion)
+
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
+func (p *TCcrPartitionSource) field4Length() int {
+	l := 0
+	if p.IsSetPrevToken() {
+		l += bthrift.Binary.FieldBeginLength("prev_token", thrift.STRING, 4)
+		l += bthrift.Binary.StringLengthNocopy(*p.PrevToken)
+
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
+func (p *TCcrPartitionSource) field5Length() int {
+	l := 0
+	if p.IsSetToken() {
+		l += bthrift.Binary.FieldBeginLength("token", thrift.STRING, 5)
+		l += bthrift.Binary.StringLengthNocopy(*p.Token)
+
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
 func (p *TCommitTxnRequest) FastRead(buf []byte) (int, error) {
 	var err error
 	var offset int
@@ -23334,6 +23671,20 @@ func (p *TCommitTxnRequest) FastRead(buf []byte) (int, error) {
 		case 15:
 			if fieldTypeId == thrift.BOOL {
 				l, err = p.FastReadField15(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		case 7601:
+			if fieldTypeId == thrift.LIST {
+				l, err = p.FastReadField7601(buf[offset:])
 				offset += l
 				if err != nil {
 					goto ReadFieldError
@@ -23603,6 +23954,33 @@ func (p *TCommitTxnRequest) FastReadField15(buf []byte) (int, error) {
 	return offset, nil
 }
 
+func (p *TCommitTxnRequest) FastReadField7601(buf []byte) (int, error) {
+	offset := 0
+
+	_, size, l, err := bthrift.Binary.ReadListBegin(buf[offset:])
+	offset += l
+	if err != nil {
+		return offset, err
+	}
+	p.CcrPartitionSources = make([]*TCcrPartitionSource, 0, size)
+	for i := 0; i < size; i++ {
+		_elem := NewTCcrPartitionSource()
+		if l, err := _elem.FastRead(buf[offset:]); err != nil {
+			return offset, err
+		} else {
+			offset += l
+		}
+
+		p.CcrPartitionSources = append(p.CcrPartitionSources, _elem)
+	}
+	if l, err := bthrift.Binary.ReadListEnd(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+	}
+	return offset, nil
+}
+
 // for compatibility
 func (p *TCommitTxnRequest) FastWrite(buf []byte) int {
 	return 0
@@ -23627,6 +24005,7 @@ func (p *TCommitTxnRequest) FastWriteNocopy(buf []byte, binaryWriter bthrift.Bin
 		offset += p.fastWriteField9(buf[offset:], binaryWriter)
 		offset += p.fastWriteField11(buf[offset:], binaryWriter)
 		offset += p.fastWriteField14(buf[offset:], binaryWriter)
+		offset += p.fastWriteField7601(buf[offset:], binaryWriter)
 	}
 	offset += bthrift.Binary.WriteFieldStop(buf[offset:])
 	offset += bthrift.Binary.WriteStructEnd(buf[offset:])
@@ -23652,6 +24031,7 @@ func (p *TCommitTxnRequest) BLength() int {
 		l += p.field13Length()
 		l += p.field14Length()
 		l += p.field15Length()
+		l += p.field7601Length()
 	}
 	l += bthrift.Binary.FieldStopLength()
 	l += bthrift.Binary.StructEndLength()
@@ -23836,6 +24216,24 @@ func (p *TCommitTxnRequest) fastWriteField15(buf []byte, binaryWriter bthrift.Bi
 	return offset
 }
 
+func (p *TCommitTxnRequest) fastWriteField7601(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetCcrPartitionSources() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "ccr_partition_sources", thrift.LIST, 7601)
+		listBeginOffset := offset
+		offset += bthrift.Binary.ListBeginLength(thrift.STRUCT, 0)
+		var length int
+		for _, v := range p.CcrPartitionSources {
+			length++
+			offset += v.FastWriteNocopy(buf[offset:], binaryWriter)
+		}
+		bthrift.Binary.WriteListBegin(buf[listBeginOffset:], thrift.STRUCT, length)
+		offset += bthrift.Binary.WriteListEnd(buf[offset:])
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
 func (p *TCommitTxnRequest) field1Length() int {
 	l := 0
 	if p.IsSetCluster() {
@@ -24006,6 +24404,20 @@ func (p *TCommitTxnRequest) field15Length() int {
 	return l
 }
 
+func (p *TCommitTxnRequest) field7601Length() int {
+	l := 0
+	if p.IsSetCcrPartitionSources() {
+		l += bthrift.Binary.FieldBeginLength("ccr_partition_sources", thrift.LIST, 7601)
+		l += bthrift.Binary.ListBeginLength(thrift.STRUCT, len(p.CcrPartitionSources))
+		for _, v := range p.CcrPartitionSources {
+			l += v.BLength()
+		}
+		l += bthrift.Binary.ListEndLength()
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
 func (p *TCommitTxnResult_) FastRead(buf []byte) (int, error) {
 	var err error
 	var offset int
@@ -24045,6 +24457,20 @@ func (p *TCommitTxnResult_) FastRead(buf []byte) (int, error) {
 		case 2:
 			if fieldTypeId == thrift.STRUCT {
 				l, err = p.FastReadField2(buf[offset:])
+				offset += l
+				if err != nil {
+					goto ReadFieldError
+				}
+			} else {
+				l, err = bthrift.Binary.Skip(buf[offset:], fieldTypeId)
+				offset += l
+				if err != nil {
+					goto SkipFieldError
+				}
+			}
+		case 7601:
+			if fieldTypeId == thrift.LIST {
+				l, err = p.FastReadField7601(buf[offset:])
 				offset += l
 				if err != nil {
 					goto ReadFieldError
@@ -24117,6 +24543,36 @@ func (p *TCommitTxnResult_) FastReadField2(buf []byte) (int, error) {
 	return offset, nil
 }
 
+func (p *TCommitTxnResult_) FastReadField7601(buf []byte) (int, error) {
+	offset := 0
+
+	_, size, l, err := bthrift.Binary.ReadListBegin(buf[offset:])
+	offset += l
+	if err != nil {
+		return offset, err
+	}
+	p.CcrNotContinuousPartitionIds = make([]int64, 0, size)
+	for i := 0; i < size; i++ {
+		var _elem int64
+		if v, l, err := bthrift.Binary.ReadI64(buf[offset:]); err != nil {
+			return offset, err
+		} else {
+			offset += l
+
+			_elem = v
+
+		}
+
+		p.CcrNotContinuousPartitionIds = append(p.CcrNotContinuousPartitionIds, _elem)
+	}
+	if l, err := bthrift.Binary.ReadListEnd(buf[offset:]); err != nil {
+		return offset, err
+	} else {
+		offset += l
+	}
+	return offset, nil
+}
+
 // for compatibility
 func (p *TCommitTxnResult_) FastWrite(buf []byte) int {
 	return 0
@@ -24128,6 +24584,7 @@ func (p *TCommitTxnResult_) FastWriteNocopy(buf []byte, binaryWriter bthrift.Bin
 	if p != nil {
 		offset += p.fastWriteField1(buf[offset:], binaryWriter)
 		offset += p.fastWriteField2(buf[offset:], binaryWriter)
+		offset += p.fastWriteField7601(buf[offset:], binaryWriter)
 	}
 	offset += bthrift.Binary.WriteFieldStop(buf[offset:])
 	offset += bthrift.Binary.WriteStructEnd(buf[offset:])
@@ -24140,6 +24597,7 @@ func (p *TCommitTxnResult_) BLength() int {
 	if p != nil {
 		l += p.field1Length()
 		l += p.field2Length()
+		l += p.field7601Length()
 	}
 	l += bthrift.Binary.FieldStopLength()
 	l += bthrift.Binary.StructEndLength()
@@ -24166,6 +24624,25 @@ func (p *TCommitTxnResult_) fastWriteField2(buf []byte, binaryWriter bthrift.Bin
 	return offset
 }
 
+func (p *TCommitTxnResult_) fastWriteField7601(buf []byte, binaryWriter bthrift.BinaryWriter) int {
+	offset := 0
+	if p.IsSetCcrNotContinuousPartitionIds() {
+		offset += bthrift.Binary.WriteFieldBegin(buf[offset:], "ccr_not_continuous_partition_ids", thrift.LIST, 7601)
+		listBeginOffset := offset
+		offset += bthrift.Binary.ListBeginLength(thrift.I64, 0)
+		var length int
+		for _, v := range p.CcrNotContinuousPartitionIds {
+			length++
+			offset += bthrift.Binary.WriteI64(buf[offset:], v)
+
+		}
+		bthrift.Binary.WriteListBegin(buf[listBeginOffset:], thrift.I64, length)
+		offset += bthrift.Binary.WriteListEnd(buf[offset:])
+		offset += bthrift.Binary.WriteFieldEnd(buf[offset:])
+	}
+	return offset
+}
+
 func (p *TCommitTxnResult_) field1Length() int {
 	l := 0
 	if p.IsSetStatus() {
@@ -24181,6 +24658,19 @@ func (p *TCommitTxnResult_) field2Length() int {
 	if p.IsSetMasterAddress() {
 		l += bthrift.Binary.FieldBeginLength("master_address", thrift.STRUCT, 2)
 		l += p.MasterAddress.BLength()
+		l += bthrift.Binary.FieldEndLength()
+	}
+	return l
+}
+
+func (p *TCommitTxnResult_) field7601Length() int {
+	l := 0
+	if p.IsSetCcrNotContinuousPartitionIds() {
+		l += bthrift.Binary.FieldBeginLength("ccr_not_continuous_partition_ids", thrift.LIST, 7601)
+		l += bthrift.Binary.ListBeginLength(thrift.I64, len(p.CcrNotContinuousPartitionIds))
+		var tmpV int64
+		l += bthrift.Binary.I64Length(int64(tmpV)) * len(p.CcrNotContinuousPartitionIds)
+		l += bthrift.Binary.ListEndLength()
 		l += bthrift.Binary.FieldEndLength()
 	}
 	return l
