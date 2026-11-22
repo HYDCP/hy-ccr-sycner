@@ -987,6 +987,10 @@ func (rpc *singleFeClient) LockBinlog(spec *base.Spec, jobUniqueId string, table
 		LockCommitSeq: &lockCommitSeq,
 	}
 	setAuthInfo(req, spec)
+	// a FE that checks the privilege of lock binlog by the table name rejects a request without it ("table is required")
+	if spec.Table != "" {
+		req.Table = &spec.Table
+	}
 
 	if resp, err := client.LockBinlog(context.Background(), req); err != nil {
 		return nil, xerror.Wrapf(err, xerror.RPC, "LockBinlog failed, req: %+v", req)
