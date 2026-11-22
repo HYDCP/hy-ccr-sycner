@@ -142,16 +142,16 @@ func (j *Job) planCcrNotContinuousResync(commitSeq, txnId int64, notContinuous [
 // startCcrResync starts the resync persisted in the progress, from the commit seq of the committed transaction: the
 // snapshot is taken after it, and the binlogs it contains are filtered as for any partial or full sync.
 func (j *Job) startCcrResync() error {
-	if err := j.startCcrResyncInternal(); err != nil {
+	resync := j.progress.CcrResync
+	if err := j.startCcrResyncInternal(resync); err != nil {
 		log.Warnf("start the resync of the not continuous partitions %+v failed, retry on the next tick: %v",
-			*j.progress.CcrResync, err)
+			*resync, err)
 		return err
 	}
 	return nil
 }
 
-func (j *Job) startCcrResyncInternal() error {
-	resync := j.progress.CcrResync
+func (j *Job) startCcrResyncInternal(resync *ccrResync) error {
 
 	// the txn is only committed in the default commit mode, the restore of its partitions waits it visible
 	if prevTxnId := j.progress.PrevTxnId; prevTxnId != -1 {
