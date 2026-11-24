@@ -17,7 +17,9 @@
 package ccr
 
 import (
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,7 +40,7 @@ func TestReplaceBackendsCacheSwapsEntries(t *testing.T) {
 	meta := NewMeta(&base.Spec{})
 
 	first := []*base.Backend{newTestBackend(1, "10.0.0.1", 9060), newTestBackend(2, "10.0.0.2", 9060)}
-	if err := meta.replaceBackendsCache(first, "show backends"); err != nil {
+	if err := meta.replaceBackendsCache(first, "show backends", meta.getBackendsGeneration()); err != nil {
 		t.Fatalf("replace backends cache failed: %v", err)
 	}
 	if got := len(meta.Backends); got != 2 {
@@ -50,7 +52,7 @@ func TestReplaceBackendsCacheSwapsEntries(t *testing.T) {
 
 	// A scale-in must drop the removed backend from both indexes.
 	second := []*base.Backend{newTestBackend(2, "10.0.0.2", 9060)}
-	if err := meta.replaceBackendsCache(second, "show backends"); err != nil {
+	if err := meta.replaceBackendsCache(second, "show backends", meta.getBackendsGeneration()); err != nil {
 		t.Fatalf("replace backends cache failed: %v", err)
 	}
 	if _, ok := meta.Backends[1]; ok {
@@ -68,11 +70,11 @@ func TestReplaceBackendsCacheKeepsPreviousOnEmptyResult(t *testing.T) {
 	meta := NewMeta(&base.Spec{})
 
 	backends := []*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}
-	if err := meta.replaceBackendsCache(backends, "show backends"); err != nil {
+	if err := meta.replaceBackendsCache(backends, "show backends", meta.getBackendsGeneration()); err != nil {
 		t.Fatalf("replace backends cache failed: %v", err)
 	}
 
-	if err := meta.replaceBackendsCache(nil, "show backends"); err == nil {
+	if err := meta.replaceBackendsCache(nil, "show backends", meta.getBackendsGeneration()); err == nil {
 		t.Fatal("expected an empty backend list to be reported as a failed refresh")
 	}
 
@@ -90,7 +92,7 @@ func TestReplaceBackendsCacheKeepsPreviousOnEmptyResult(t *testing.T) {
 func TestInvalidateBackendsCache(t *testing.T) {
 	meta := NewMeta(&base.Spec{})
 
-	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends"); err != nil {
+	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", meta.getBackendsGeneration()); err != nil {
 		t.Fatalf("replace backends cache failed: %v", err)
 	}
 
@@ -108,7 +110,7 @@ func TestInvalidateBackendsCache(t *testing.T) {
 func TestGetBackendMapReturnsSnapshot(t *testing.T) {
 	meta := NewMeta(&base.Spec{})
 
-	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends"); err != nil {
+	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", meta.getBackendsGeneration()); err != nil {
 		t.Fatalf("replace backends cache failed: %v", err)
 	}
 
@@ -127,7 +129,7 @@ func TestGetBackendMapReturnsSnapshot(t *testing.T) {
 // the cache must not be observable as a partially filled map by readers.
 func TestBackendsCacheConcurrentAccess(t *testing.T) {
 	meta := NewMeta(&base.Spec{})
-	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends"); err != nil {
+	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", meta.getBackendsGeneration()); err != nil {
 		t.Fatalf("replace backends cache failed: %v", err)
 	}
 
@@ -147,7 +149,7 @@ func TestBackendsCacheConcurrentAccess(t *testing.T) {
 			for id := int64(1); id <= 8; id++ {
 				backends = append(backends, newTestBackend(id, "10.0.0.1", uint16(9060+id)))
 			}
-			if err := meta.replaceBackendsCache(backends, "show backends"); err != nil {
+			if err := meta.replaceBackendsCache(backends, "show backends", meta.getBackendsGeneration()); err != nil {
 				t.Errorf("replace backends cache failed: %v", err)
 				return
 			}
@@ -176,4 +178,231 @@ func TestBackendsCacheConcurrentAccess(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	close(done)
 	wg.Wait()
+}
+
+// withBackendsCacheTTL sets the package level TTL for one test and restores it.
+func withBackendsCacheTTL(t *testing.T, ttl time.Duration) {
+	t.Helper()
+	prev := GetBackendsCacheTTL()
+	if err := SetBackendsCacheTTL(ttl); err != nil {
+		t.Fatalf("set backends cache ttl %v failed: %v", ttl, err)
+	}
+	t.Cleanup(func() {
+		if err := SetBackendsCacheTTL(prev); err != nil {
+			t.Fatalf("restore backends cache ttl %v failed: %v", prev, err)
+		}
+	})
+}
+
+// TestBackendsCacheManualModeNeverExpires covers ttl=0: an old cache stays valid,
+// and reads are served from it without querying FE. The empty Spec has no FE to
+// connect to, so a refresh attempt would make GetBackends/GetBackendMap fail.
+func TestBackendsCacheManualModeNeverExpires(t *testing.T) {
+	withBackendsCacheTTL(t, 0)
+
+	meta := NewMeta(&base.Spec{})
+	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", meta.getBackendsGeneration()); err != nil {
+		t.Fatalf("replace backends cache failed: %v", err)
+	}
+	meta.backendsLastUpdate = time.Now().Add(-365 * 24 * time.Hour)
+
+	if !meta.isBackendsCacheValid() {
+		t.Fatal("expected the cache to stay valid in manual mode (ttl=0)")
+	}
+	if backends, err := meta.GetBackends(); err != nil || len(backends) != 1 {
+		t.Fatalf("expected GetBackends to be served from cache, got %v, err=%v", backends, err)
+	}
+	if backendMap, err := meta.GetBackendMap(); err != nil || len(backendMap) != 1 {
+		t.Fatalf("expected GetBackendMap to be served from cache, got %v, err=%v", backendMap, err)
+	}
+
+	meta.InvalidateBackendsCache()
+	if meta.isBackendsCacheValid() {
+		t.Fatal("expected InvalidateBackendsCache to invalidate the cache in manual mode")
+	}
+}
+
+func TestBackendsCacheAutoModeExpires(t *testing.T) {
+	withBackendsCacheTTL(t, 30*time.Second)
+
+	meta := NewMeta(&base.Spec{})
+	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", meta.getBackendsGeneration()); err != nil {
+		t.Fatalf("replace backends cache failed: %v", err)
+	}
+	if !meta.isBackendsCacheValid() {
+		t.Fatal("expected a fresh cache to be valid")
+	}
+
+	meta.backendsLastUpdate = time.Now().Add(-31 * time.Second)
+	if meta.isBackendsCacheValid() {
+		t.Fatal("expected the cache to expire after the configured ttl")
+	}
+}
+
+// TestBackendsCacheEmptyIsInvalid: the first use always loads from FE, in both modes.
+func TestBackendsCacheEmptyIsInvalid(t *testing.T) {
+	for _, ttl := range []time.Duration{0, time.Hour} {
+		withBackendsCacheTTL(t, ttl)
+		meta := NewMeta(&base.Spec{})
+		meta.backendsLastUpdate = time.Now()
+		if meta.isBackendsCacheValid() {
+			t.Fatalf("expected an empty cache to be invalid, ttl=%v", ttl)
+		}
+	}
+}
+
+func TestSetBackendsCacheTTL(t *testing.T) {
+	withBackendsCacheTTL(t, 0)
+
+	if err := SetBackendsCacheTTL(-time.Second); err == nil {
+		t.Fatal("expected a negative ttl to be rejected")
+	}
+	if got := GetBackendsCacheTTL(); got != 0 {
+		t.Fatalf("expected a rejected ttl to leave the setting unchanged, got %v", got)
+	}
+
+	if err := SetBackendsCacheTTL(60 * time.Second); err != nil {
+		t.Fatalf("set ttl 60s failed: %v", err)
+	}
+	if got := GetBackendsCacheTTL(); got != 60*time.Second {
+		t.Fatalf("expected ttl 60s, got %v", got)
+	}
+}
+
+// fakeFE simulates `show backends`: the first query blocks until release is
+// closed and then returns the old topology, later queries return the new one.
+type fakeFE struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func newFakeFE(meta *Meta) *fakeFE {
+	fe := &fakeFE{started: make(chan struct{}), release: make(chan struct{})}
+	meta.fetchBackendsFn = func() ([]*base.Backend, string, error) {
+		if fe.calls.Add(1) == 1 {
+			close(fe.started)
+			<-fe.release
+			return []*base.Backend{newTestBackend(1, "old-be", 9060)}, "show backends", nil
+		}
+		return []*base.Backend{newTestBackend(2, "new-be", 9060)}, "show backends", nil
+	}
+	return fe
+}
+
+func requireBackendHosts(t *testing.T, meta *Meta, want string) {
+	t.Helper()
+	backends, err := meta.GetBackends()
+	if err != nil {
+		t.Fatalf("get backends failed: %v", err)
+	}
+	if len(backends) != 1 || backends[0].Host != want {
+		t.Fatalf("expected backends [%s], got %v", want, backends)
+	}
+}
+
+// TestInvalidateDuringRefreshIsNotLost: a query that read the old topology before
+// POST /invalidate_backends_cache must not write it back as a valid cache. In
+// manual mode such a cache would never expire.
+func TestInvalidateDuringRefreshIsNotLost(t *testing.T) {
+	withBackendsCacheTTL(t, 0)
+	meta := NewMeta(&base.Spec{})
+	fe := newFakeFE(meta)
+
+	firstErr := make(chan error, 1)
+	go func() {
+		backends, err := meta.GetBackends()
+		if err == nil && len(backends) == 0 {
+			err = errors.New("first load returned an empty backend list")
+		}
+		firstErr <- err
+	}()
+
+	<-fe.started
+	meta.InvalidateBackendsCache()
+	close(fe.release)
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first GetBackends failed: %v", err)
+	}
+
+	requireBackendHosts(t, meta, "new-be")
+	if got := fe.calls.Load(); got < 2 {
+		t.Fatalf("expected FE to be queried again after the invalidation, got %d queries", got)
+	}
+
+	// Once refreshed after the invalidation, the cache is valid again.
+	calls := fe.calls.Load()
+	requireBackendHosts(t, meta, "new-be")
+	if got := fe.calls.Load(); got != calls {
+		t.Fatalf("expected a cache hit after the refresh, FE queries %d -> %d", calls, got)
+	}
+}
+
+// TestStaleRefreshDoesNotOverwriteNewerOne: a refresh that started before the
+// invalidation must not overwrite a refresh that started after it.
+func TestStaleRefreshDoesNotOverwriteNewerOne(t *testing.T) {
+	withBackendsCacheTTL(t, 0)
+	meta := NewMeta(&base.Spec{})
+	fe := newFakeFE(meta)
+
+	staleDone := make(chan error, 1)
+	go func() { staleDone <- meta.UpdateBackends() }()
+
+	<-fe.started
+	meta.InvalidateBackendsCache()
+	requireBackendHosts(t, meta, "new-be") // refresh started after the invalidation
+	close(fe.release)
+	if err := <-staleDone; err != nil {
+		t.Fatalf("stale refresh failed: %v", err)
+	}
+
+	if id, ok := meta.lookupBackendId("old-be:9060"); ok {
+		t.Fatalf("expected the stale topology not to be written back, found old-be id=%d", id)
+	}
+	requireBackendHosts(t, meta, "new-be")
+}
+
+func TestReplaceBackendsCacheRejectsStaleGeneration(t *testing.T) {
+	withBackendsCacheTTL(t, 0)
+	meta := NewMeta(&base.Spec{})
+	if err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", meta.getBackendsGeneration()); err != nil {
+		t.Fatalf("replace backends cache failed: %v", err)
+	}
+
+	generation := meta.getBackendsGeneration()
+	meta.InvalidateBackendsCache()
+	err := meta.replaceBackendsCache([]*base.Backend{newTestBackend(2, "10.0.0.2", 9060)}, "show backends", generation)
+	if !errors.Is(err, errBackendsInvalidatedDuringRefresh) {
+		t.Fatalf("expected errBackendsInvalidatedDuringRefresh, got %v", err)
+	}
+	if meta.isBackendsCacheValid() {
+		t.Fatal("expected the cache to stay invalid after a stale write back")
+	}
+	if _, ok := meta.lookupBackendId("10.0.0.2:9060"); ok {
+		t.Fatal("expected the stale result not to be written")
+	}
+	if id, ok := meta.lookupBackendId("10.0.0.1:9060"); !ok || id != 1 {
+		t.Fatalf("expected the previous entries to stay readable, got id=%d ok=%v", id, ok)
+	}
+}
+
+func TestUpdateBackendsGivesUpWhenAlwaysInvalidated(t *testing.T) {
+	withBackendsCacheTTL(t, 0)
+	meta := NewMeta(&base.Spec{})
+	var calls atomic.Int32
+	meta.fetchBackendsFn = func() ([]*base.Backend, string, error) {
+		calls.Add(1)
+		meta.InvalidateBackendsCache() // an invalidation lands during every query
+		return []*base.Backend{newTestBackend(1, "10.0.0.1", 9060)}, "show backends", nil
+	}
+
+	if err := meta.UpdateBackends(); !errors.Is(err, errBackendsInvalidatedDuringRefresh) {
+		t.Fatalf("expected UpdateBackends to give up, got %v", err)
+	}
+	if got := calls.Load(); got != maxBackendsRefreshAttempts {
+		t.Fatalf("expected %d FE queries, got %d", maxBackendsRefreshAttempts, got)
+	}
+	if meta.isBackendsCacheValid() {
+		t.Fatal("expected the cache to stay invalid")
+	}
 }

@@ -116,3 +116,10 @@ bash bin/start_syncer.sh --local_repo_name "repo_name"
 bash bin/start_syncer.sh --rpc_timeout 30s
 ```
 默认值为3s
+
+### --backends_cache_ttl duration
+用于指定 BE 列表缓存的有效期
+```bash
+bash bin/start_syncer.sh --backends_cache_ttl 60s
+```
+默认值为0s，即手动模式：BE 列表只在首次使用、调用 `POST /invalidate_backends_cache`、Syncer 重启时刷新。设为大于0的值（如60s）时按该时长自动从 FE 重新获取。负数会导致启动失败。

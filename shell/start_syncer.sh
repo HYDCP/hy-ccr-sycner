@@ -28,6 +28,9 @@ Options:
     --pprof_port <arg>          the port of pprof
     --connect_timeout <arg>     arg like 15s, default is 10s
     --rpc_timeout <arg>         arg like 10s, default is 3s
+    --backends_cache_ttl <arg>  BE list cache ttl, default is 0s (manual mode: refreshed only on first use,
+                                POST /invalidate_backends_cache or restart); arg like 60s refreshes it from FE
+                                every 60s; negative value is rejected
     --config_file <arg>         the config file of ccr, which contains db_type,host,port,user and password,
                                 default config file name is db.conf. If set config_file, the db_type, db_host,
                                 db_port, db_user, db_password should not be set.
@@ -63,6 +66,7 @@ OPTS="$(getopt \
     -l 'pprof_port:' \
     -l 'connect_timeout:' \
     -l 'rpc_timeout:' \
+    -l 'backends_cache_ttl:' \
     -l 'config_file:' \
     -- "$@")"
 
@@ -83,6 +87,7 @@ PPROF="false"
 PPROF_PORT="6060"
 CONNECT_TIMEOUT="10s"
 RPC_TIMEOUT="30s"
+BACKENDS_CACHE_TTL="0s"
 CONFIG_FILE=""
 while true; do
     case "$1" in
@@ -160,6 +165,10 @@ while true; do
         RPC_TIMEOUT=$2
         shift 2
         ;;
+    --backends_cache_ttl)
+        BACKENDS_CACHE_TTL=$2
+        shift 2
+        ;;
     --config_file)
         CONFIG_FILE=$2
         shift 2
@@ -226,6 +235,7 @@ if [[ "${RUN_DAEMON}" -eq 1 ]]; then
           "-log_filename=${LOG_DIR}" \
           "-connect_timeout=${CONNECT_TIMEOUT}" \
           "-rpc_timeout=${RPC_TIMEOUT}" \
+          "-backends_cache_ttl=${BACKENDS_CACHE_TTL}" \
           "$@" >>"${LOG_DIR}" 2>&1 </dev/null &
     echo $! > ${pidfile}
 else
@@ -243,6 +253,7 @@ else
         "-pprof_port=${PPROF_PORT}" \
         "-connect_timeout=${CONNECT_TIMEOUT}" \
         "-rpc_timeout=${RPC_TIMEOUT}" \
+        "-backends_cache_ttl=${BACKENDS_CACHE_TTL}" \
         "-log_level=${LOG_LEVEL}" | tee -a "${LOG_DIR}"
 fi
 
