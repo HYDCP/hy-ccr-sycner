@@ -18,11 +18,13 @@ package ccr
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/selectdb/ccr_syncer/pkg/ccr/base"
@@ -35,11 +37,39 @@ import (
 	"github.com/tidwall/btree"
 )
 
-const (
-	// DefaultBackendsCacheTTL is the default time-to-live for backends cache.
-	// After this duration, the cache will be considered stale and will be refreshed.
-	DefaultBackendsCacheTTL = 60 * time.Second
-)
+// backendsCacheTTL is the time-to-live of the backends cache, in nanoseconds.
+// It is set once at startup from the -backends_cache_ttl flag; atomic so that
+// tests and any later reader never race with the setter.
+//
+//   - 0 (default): manual mode. The cache never expires by time; it is loaded on
+//     first use (empty cache), after POST /invalidate_backends_cache, and when
+//     the syncer restarts.
+//   - > 0: the cache expires after this duration and is reloaded from FE on the
+//     next access.
+var backendsCacheTTL atomic.Int64
+
+// SetBackendsCacheTTL sets the backends cache TTL. A negative ttl is rejected
+// and leaves the current setting unchanged.
+func SetBackendsCacheTTL(ttl time.Duration) error {
+	if ttl < 0 {
+		return xerror.Errorf(xerror.Normal, "backends_cache_ttl must not be negative, got %v", ttl)
+	}
+	backendsCacheTTL.Store(int64(ttl))
+	return nil
+}
+
+// GetBackendsCacheTTL returns the backends cache TTL; 0 means manual mode.
+func GetBackendsCacheTTL() time.Duration {
+	return time.Duration(backendsCacheTTL.Load())
+}
+
+// DescribeBackendsCacheTTL returns a human readable description of the mode.
+func DescribeBackendsCacheTTL(ttl time.Duration) string {
+	if ttl <= 0 {
+		return "manual (never expires by time; refreshed on first use, POST /invalidate_backends_cache or restart)"
+	}
+	return fmt.Sprintf("auto (expires every %v)", ttl)
+}
 
 const (
 	degree = 128
@@ -73,6 +103,14 @@ type Meta struct {
 	backendsLock       sync.RWMutex
 	backendsLastUpdate time.Time
 	backendsInvalid    bool
+	// backendsGeneration is bumped by every InvalidateBackendsCache. A refresh
+	// records it before querying FE and only writes its result back if it is
+	// unchanged, so a query that may have read the topology from before the
+	// invalidation can not mark the cache valid again.
+	backendsGeneration uint64
+
+	// fetchBackendsFn replaces the FE query in UpdateBackends; tests only, nil in production.
+	fetchBackendsFn func() ([]*base.Backend, string, error)
 }
 
 func NewMeta(spec *base.Spec) *Meta {
@@ -499,6 +537,41 @@ func (m *Meta) GetPartitionIdByRange(tableId int64, partitionRange string) (int6
 // empty after this returns. A cluster whose backends are all gone therefore keeps
 // its last known list until FE reports at least one backend again.
 func (m *Meta) UpdateBackends() error {
+	fetch := m.fetchBackendsFn
+	if fetch == nil {
+		fetch = m.queryBackends
+	}
+
+	for attempt := 1; ; attempt++ {
+		generation := m.getBackendsGeneration()
+		backends, query, err := fetch()
+		if err != nil {
+			return err
+		}
+		err = m.replaceBackendsCache(backends, query, generation)
+		if !errors.Is(err, errBackendsInvalidatedDuringRefresh) {
+			return err
+		}
+		if attempt >= maxBackendsRefreshAttempts {
+			return xerror.Wrapf(err, xerror.Normal, "backends cache kept being invalidated, gave up after %d attempts", attempt)
+		}
+		log.Infof("backends cache invalidated during refresh, discard the result and query FE again (attempt %d)", attempt)
+	}
+}
+
+const maxBackendsRefreshAttempts = 3
+
+var errBackendsInvalidatedDuringRefresh = errors.New("backends cache invalidated during refresh")
+
+func (m *Meta) getBackendsGeneration() uint64 {
+	m.backendsLock.RLock()
+	defer m.backendsLock.RUnlock()
+	return m.backendsGeneration
+}
+
+// queryBackends runs `show backends` on FE and parses the result. It returns the
+// query text for error messages.
+func (m *Meta) queryBackends() ([]*base.Backend, string, error) {
 	// mysql> show backends;
 	// +-----------+-----------------+-----------+---------------+--------+----------+----------+---------------------+---------------------+-------+----------------------+-----------------------+-----------+------------------+---------------+---------------+---------+----------------+--------------------+--------------------------+--------+------------------------------+-------------------------------------------------------------------------------------------------------------------------------+-------------------------+----------+
 	// | BackendId | Cluster         | Host      | HeartbeatPort | BePort | HttpPort | BrpcPort | LastStartTime       | LastHeartbeat       | Alive | SystemDecommissioned | ClusterDecommissioned | TabletNum | DataUsedCapacity | AvailCapacity | TotalCapacity | UsedPct | MaxDiskUsedPct | RemoteUsedCapacity | Tag                      | ErrMsg | Version                      | Status                                                                                                                        | HeartbeatFailureCounter | NodeRole |
@@ -507,7 +580,7 @@ func (m *Meta) UpdateBackends() error {
 	// +-----------+-----------------+-----------+---------------+--------+----------+----------+---------------------+---------------------+-------+----------------------+-----------------------+-----------+------------------+---------------+---------------+---------+----------------+--------------------+--------------------------+--------+------------------------------+-------------------------------------------------------------------------------------------------------------------------------+-------------------------+----------+
 	db, err := m.Connect()
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
 	backends := make([]*base.Backend, 0)
@@ -515,40 +588,40 @@ func (m *Meta) UpdateBackends() error {
 	log.Debug(query)
 	rows, err := db.Query(query)
 	if err != nil {
-		return xerror.Wrap(err, xerror.Normal, query)
+		return nil, query, xerror.Wrap(err, xerror.Normal, query)
 	}
 
 	defer rows.Close()
 	for rows.Next() {
 		rowParser := utils.NewRowParser()
 		if err := rowParser.Parse(rows); err != nil {
-			return xerror.Wrapf(err, xerror.Normal, query)
+			return nil, query, xerror.Wrapf(err, xerror.Normal, query)
 		}
 
 		var backend base.Backend
 		backend.Id, err = rowParser.GetInt64("BackendId")
 		if err != nil {
-			return xerror.Wrapf(err, xerror.Normal, query)
+			return nil, query, xerror.Wrapf(err, xerror.Normal, query)
 		}
 		backend.Host, err = rowParser.GetString("Host")
 		if err != nil {
-			return xerror.Wrapf(err, xerror.Normal, query)
+			return nil, query, xerror.Wrapf(err, xerror.Normal, query)
 		}
 
 		var port int64
 		port, err = rowParser.GetInt64("BePort")
 		if err != nil {
-			return xerror.Wrapf(err, xerror.Normal, query)
+			return nil, query, xerror.Wrapf(err, xerror.Normal, query)
 		}
 		backend.BePort = uint16(port)
 		port, err = rowParser.GetInt64("HttpPort")
 		if err != nil {
-			return xerror.Wrapf(err, xerror.Normal, query)
+			return nil, query, xerror.Wrapf(err, xerror.Normal, query)
 		}
 		backend.HttpPort = uint16(port)
 		port, err = rowParser.GetInt64("BrpcPort")
 		if err != nil {
-			return xerror.Wrapf(err, xerror.Normal, query)
+			return nil, query, xerror.Wrapf(err, xerror.Normal, query)
 		}
 		backend.BrpcPort = uint16(port)
 
@@ -557,10 +630,10 @@ func (m *Meta) UpdateBackends() error {
 	}
 
 	if err := rows.Err(); err != nil {
-		return xerror.Wrap(err, xerror.Normal, query)
+		return nil, query, xerror.Wrap(err, xerror.Normal, query)
 	}
 
-	return m.replaceBackendsCache(backends, query)
+	return backends, query, nil
 }
 
 // replaceBackendsCache swaps in a freshly fetched backend list. The new maps are
@@ -570,7 +643,12 @@ func (m *Meta) UpdateBackends() error {
 // An empty result is treated as a failed refresh: keeping the previous entries is
 // safer than reporting a cluster with no backends, which would fail job creation
 // and hand an incomplete network map to restore.
-func (m *Meta) replaceBackendsCache(backends []*base.Backend, query string) error {
+//
+// generation is the value of backendsGeneration read before the query was sent.
+// If InvalidateBackendsCache ran since then, the result may describe the old
+// topology: nothing is written and errBackendsInvalidatedDuringRefresh is
+// returned, so the cache stays invalid and the caller queries FE again.
+func (m *Meta) replaceBackendsCache(backends []*base.Backend, query string, generation uint64) error {
 	if len(backends) == 0 {
 		return xerror.Errorf(xerror.Normal, "no backends returned by FE, keep the previous backends cache: %s", query)
 	}
@@ -587,6 +665,10 @@ func (m *Meta) replaceBackendsCache(backends []*base.Backend, query string) erro
 	m.backendsLock.Lock()
 	defer m.backendsLock.Unlock()
 
+	if m.backendsGeneration != generation {
+		return errBackendsInvalidatedDuringRefresh
+	}
+
 	oldCount := len(m.Backends)
 	m.Backends = newBackends
 	m.BackendHostPort2IdMap = newHostPort2Id
@@ -599,19 +681,22 @@ func (m *Meta) replaceBackendsCache(backends []*base.Backend, query string) erro
 	if oldCount > 0 && oldCount != newCount {
 		log.Infof("backend count changed: %d -> %d", oldCount, newCount)
 	}
-	log.Debugf("backends cache updated, count: %d, ttl: %v", newCount, DefaultBackendsCacheTTL)
+	log.Debugf("backends cache updated, count: %d, ttl: %v", newCount, GetBackendsCacheTTL())
 
 	return nil
 }
 
 // isBackendsCacheValid checks if backend cache is still valid (not expired and not invalidated).
+// An empty cache is always invalid. With ttl <= 0 (manual mode) the cache never
+// expires by time.
 func (m *Meta) isBackendsCacheValid() bool {
 	m.backendsLock.RLock()
 	defer m.backendsLock.RUnlock()
 
+	ttl := GetBackendsCacheTTL()
 	hasData := len(m.Backends) > 0
 	notInvalid := !m.backendsInvalid
-	notExpired := time.Since(m.backendsLastUpdate) < DefaultBackendsCacheTTL
+	notExpired := ttl <= 0 || time.Since(m.backendsLastUpdate) < ttl
 	valid := hasData && notInvalid && notExpired
 
 	log.Tracef("backends cache check: hasData=%v, notInvalid=%v, notExpired=%v, valid=%v",
@@ -625,6 +710,7 @@ func (m *Meta) InvalidateBackendsCache() {
 	m.backendsLock.Lock()
 	defer m.backendsLock.Unlock()
 	m.backendsInvalid = true
+	m.backendsGeneration++
 	log.Debugf("backends cache invalidated, will refresh on next access")
 }
 
