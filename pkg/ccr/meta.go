@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/selectdb/ccr_syncer/pkg/ccr/base"
@@ -35,11 +36,39 @@ import (
 	"github.com/tidwall/btree"
 )
 
-const (
-	// DefaultBackendsCacheTTL is the default time-to-live for backends cache.
-	// After this duration, the cache will be considered stale and will be refreshed.
-	DefaultBackendsCacheTTL = 60 * time.Second
-)
+// backendsCacheTTL is the time-to-live of the backends cache, in nanoseconds.
+// It is set once at startup from the -backends_cache_ttl flag; atomic so that
+// tests and any later reader never race with the setter.
+//
+//   - 0 (default): manual mode. The cache never expires by time; it is loaded on
+//     first use (empty cache), after POST /invalidate_backends_cache, and when
+//     the syncer restarts.
+//   - > 0: the cache expires after this duration and is reloaded from FE on the
+//     next access.
+var backendsCacheTTL atomic.Int64
+
+// SetBackendsCacheTTL sets the backends cache TTL. A negative ttl is rejected
+// and leaves the current setting unchanged.
+func SetBackendsCacheTTL(ttl time.Duration) error {
+	if ttl < 0 {
+		return xerror.Errorf(xerror.Normal, "backends_cache_ttl must not be negative, got %v", ttl)
+	}
+	backendsCacheTTL.Store(int64(ttl))
+	return nil
+}
+
+// GetBackendsCacheTTL returns the backends cache TTL; 0 means manual mode.
+func GetBackendsCacheTTL() time.Duration {
+	return time.Duration(backendsCacheTTL.Load())
+}
+
+// DescribeBackendsCacheTTL returns a human readable description of the mode.
+func DescribeBackendsCacheTTL(ttl time.Duration) string {
+	if ttl <= 0 {
+		return "manual (never expires by time; refreshed on first use, POST /invalidate_backends_cache or restart)"
+	}
+	return fmt.Sprintf("auto (expires every %v)", ttl)
+}
 
 const (
 	degree = 128
@@ -599,19 +628,22 @@ func (m *Meta) replaceBackendsCache(backends []*base.Backend, query string) erro
 	if oldCount > 0 && oldCount != newCount {
 		log.Infof("backend count changed: %d -> %d", oldCount, newCount)
 	}
-	log.Debugf("backends cache updated, count: %d, ttl: %v", newCount, DefaultBackendsCacheTTL)
+	log.Debugf("backends cache updated, count: %d, ttl: %v", newCount, GetBackendsCacheTTL())
 
 	return nil
 }
 
 // isBackendsCacheValid checks if backend cache is still valid (not expired and not invalidated).
+// An empty cache is always invalid. With ttl <= 0 (manual mode) the cache never
+// expires by time.
 func (m *Meta) isBackendsCacheValid() bool {
 	m.backendsLock.RLock()
 	defer m.backendsLock.RUnlock()
 
+	ttl := GetBackendsCacheTTL()
 	hasData := len(m.Backends) > 0
 	notInvalid := !m.backendsInvalid
-	notExpired := time.Since(m.backendsLastUpdate) < DefaultBackendsCacheTTL
+	notExpired := ttl <= 0 || time.Since(m.backendsLastUpdate) < ttl
 	valid := hasData && notInvalid && notExpired
 
 	log.Tracef("backends cache check: hasData=%v, notInvalid=%v, notExpired=%v, valid=%v",
