@@ -1,5 +1,21 @@
 # 更新日志
 
+# hy-ccr-3.0.6-rc08.2
+
+`hy-ccr-3.0.6-rc08.1` 的补丁版本，仅包含 HYDCP/hy-ccr-sycner#19。不移动 `hy-ccr-3.0.6-rc08.1` tag。
+
+### Fix
+
+- BE 列表缓存有效期改为启动参数 `-backends_cache_ttl`（`start_syncer.sh --backends_cache_ttl`），**默认 `0s` = 手动模式**：只在首次使用、`POST /invalidate_backends_cache`、重启时刷新；`60s` 即 rc08 / rc08.1 的自动刷新；负数启动失败（HYDCP/hy-ccr-sycner#19）。
+- 刷新期间调用 `/invalidate_backends_cache` 不再被已读到旧拓扑的查询覆盖：增加失效代数，过期结果丢弃并重查，最多 3 次（HYDCP/hy-ccr-sycner#19）。
+
+### Compatibility / Known limitations
+
+- 默认行为从 60 秒自动刷新变为手动模式；BE 扩缩容、换 IP 后要在每台 Syncer 调 `POST /invalidate_backends_cache`。增量 ingest 每次现取 BE 列表，不受影响。
+- 参数值要带单位（`60s`）；`config_file` 中的同名配置覆盖命令行。
+- 回退到 rc08.1 时 `start_syncer.sh` 要一起换回，否则旧二进制因未知参数启动失败。
+- `start_syncer.sh --daemon` 启动阶段失败仍返回 0（原有行为，HYDCP/hy-ccr-sycner#20）。详见 [发布说明](doc/releases/hy-ccr-3.0.6-rc08.2.md)。
+
 # hy-ccr-3.0.6-rc08.1
 
 `hy-ccr-3.0.6-rc08` 的补丁版本，仅包含 HYDCP/hy-ccr-sycner#7（dev 上 #6 的 backport）。不移动 `hy-ccr-3.0.6-rc08` tag。
