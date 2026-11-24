@@ -56,6 +56,8 @@ type Syncer struct {
 	Pprof       bool
 	Ppof_port   int
 	Config_file string
+
+	Backends_cache_ttl time.Duration
 }
 
 var (
@@ -82,6 +84,18 @@ func init() {
 	flag.IntVar(&syncer.Port, "port", 9190, "syncer port")
 	flag.IntVar(&syncer.Ppof_port, "pprof_port", 6060, "pprof port used for memory analyze")
 	flag.BoolVar(&syncer.Pprof, "pprof", false, "use pprof or not")
+	flag.DurationVar(&syncer.Backends_cache_ttl, "backends_cache_ttl", 0,
+		"backends cache ttl, 0 means manual mode: the BE list is loaded on first use and only refreshed by "+
+			"POST /invalidate_backends_cache or a restart; > 0 refreshes it from FE after this duration (e.g. 60s); negative is rejected")
+}
+
+// applyBackendsCacheTTL validates the -backends_cache_ttl flag and applies it.
+func applyBackendsCacheTTL(ttl time.Duration) error {
+	if err := ccr.SetBackendsCacheTTL(ttl); err != nil {
+		return err
+	}
+	log.Infof("backends cache ttl: %v, mode: %s", ttl, ccr.DescribeBackendsCacheTTL(ttl))
+	return nil
 }
 
 func parseConfigFile() error {
@@ -160,6 +174,11 @@ func main() {
 			flag.PrintDefaults()
 			log.Fatalf("parse config file error: %+v", err)
 		}
+	}
+
+	if err := applyBackendsCacheTTL(syncer.Backends_cache_ttl); err != nil {
+		fmt.Printf("invalid backends_cache_ttl: %v\n", err)
+		log.Fatalf("invalid backends_cache_ttl: %+v", err)
 	}
 
 	// Step 1: Check db
