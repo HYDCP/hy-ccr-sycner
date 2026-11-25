@@ -1,5 +1,19 @@
 # 更新日志
 
+# hy-ccr-3.0.6-rc08.3
+
+`hy-ccr-3.0.6-rc08.2` 的补丁版本，仅包含 HYDCP/hy-ccr-sycner#24。不移动 `hy-ccr-3.0.6-rc08.2` tag。
+
+### Fix
+
+- FE 返回不带 master 地址的 `NOT_MASTER` 时（follower 未就绪、原 master 重启后未追上元数据、选举中），任务不再进入 panic 并永久停止，改为本轮失败、下一轮重试，FE 恢复后自动继续。原先只能重启 Syncer 恢复（HYDCP/hy-ccr-sycner#24）。
+
+### Compatibility / Known limitations
+
+- 该场景的日志关键字从 `job panic` 变为 `job sync failed`，错误文本 `not master compatible` 不变；按 `job panic` 配置的告警在这个场景下不再触发。
+- 不缩短故障期间的同步中断时间：被请求的 FE 未就绪期间同步仍然失败，只保证 FE 恢复后任务自动继续。
+- 没有元数据、参数、接口变更；从 rc08.2 升级只需替换二进制并重启。详见 [发布说明](doc/releases/hy-ccr-3.0.6-rc08.3.md)。
+
 # hy-ccr-3.0.6-rc08.2
 
 `hy-ccr-3.0.6-rc08.1` 的补丁版本，仅包含 HYDCP/hy-ccr-sycner#19。不移动 `hy-ccr-3.0.6-rc08.1` tag。
