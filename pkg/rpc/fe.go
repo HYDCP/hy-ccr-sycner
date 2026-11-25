@@ -273,9 +273,13 @@ func (r *retryWithMasterRedirectAndCachedClientsRpc) call0(masterClient IFeRpc) 
 		}
 	}
 
-	// no compatible for master
+	// NOT_MASTER without master address. The FE omits the address when it does not know
+	// the master yet, eg: a follower which is not ready (master election in progress, meta
+	// out of date), or a new master which has not finished the transfer. It is a transient
+	// state, so the error must be recoverable: a panic error would stop the job forever,
+	// even after the FE is ready again.
 	if !resp.IsSetMasterAddress() {
-		err = xerror.XPanicWrapf(ErrFeNotMasterCompatible, "fe addr [%s]", masterClient.Address())
+		err = xerror.XWrapf(ErrFeNotMasterCompatible, "fe addr [%s]", masterClient.Address())
 		return &call0Result{
 			canUseNextAddr: true,
 			err:            err, // not nil
