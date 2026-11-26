@@ -42,7 +42,8 @@ type TxnContext struct {
 	// The txn label
 	Label string `json:"label"`
 	// The txn commit info
-	CommitInfos []*ttypes.TTabletCommitInfo `json:"commit_infos"`
+	CommitInfos []*ttypes.TTabletCommitInfo     `json:"commit_infos"`
+	CcrSources  []*festruct.TCcrPartitionSource `json:"ccr_sources,omitempty"`
 	// Is txn insert? (which contains sub txn info)
 	IsTxnInsert bool `json:"is_txn_insert"`
 	// The sub txn info of the txn insert
@@ -217,6 +218,13 @@ func (j *Job) pipelineSync() error {
 				return nil
 			}
 
+			// Sync again the not continuous partitions of a committed txn, the later txns are rolled back.
+			// After the skip the user required: a full sync covers the resync
+			if j.progress.CcrResync != nil {
+				j.resetPipeline()
+				return j.startCcrResync()
+			}
+
 			// Step launch transaction if no binlogs or the next binlog is an upsert binlog.
 			if !j.pipelineCtx.hasNonUpsertBinlog() {
 				j.progress.NextSubVolatile(LaunchTransaction, &PipelineInMemoryData{})
@@ -315,13 +323,22 @@ func (j *Job) pipelineSync() error {
 				return xerror.Errorf(xerror.Normal, "commitable txn is nil but state is commit pipeline transaction")
 			}
 
-			if err := j.commitTxn(data.CommitableTxn); err != nil {
+			resync, err := j.commitTxn(data.CommitableTxn)
+			if err != nil {
 				j.resetPipeline() // reset the pipeline context, to force the pipeline to rollback.
 				return err
 			}
 
 			data.consumeCommitableTxn()
-			j.progress.DoneSubCheckpoint(CommitPipeline, data)
+			nextState := CommitPipeline
+			if resync != nil {
+				// Persist the resync and the rollback of the later txns with the commit, a restart then rolls them
+				// back and starts the resync. Reset the pipeline first, to stop the ingesting of them.
+				j.progress.CcrResync = resync
+				j.resetPipeline()
+				nextState = RollbackPipeline
+			}
+			j.progress.DoneSubCheckpoint(nextState, data)
 
 			// release the binlogs before PrevCommitSeq.
 			if err := j.lockBinlog(j.progress.PrevCommitSeq); err != nil {
@@ -722,6 +739,7 @@ func (j *Job) launchIngestJob(ctx *TxnContext) error {
 		err := ingestJob.Error()
 		if err == nil {
 			ctx.CommitInfos = ingestJob.GetTabletCommitInfos()
+			ctx.CcrSources = ingestJob.CcrPartitionSources()
 			if ctx.IsTxnInsert {
 				ctx.SubTxnInfos = ingestJob.GetSubTxnInfos()
 			}
@@ -778,14 +796,15 @@ func (j *Job) prepareIngestJob(ctx *TxnContext) (*IngestBinlogJob, error) {
 	return job, nil
 }
 
-func (j *Job) commitTxn(ctx *TxnContext) error {
+// commitTxn commits the txn, and returns the resync of its not continuous partitions, if any.
+func (j *Job) commitTxn(ctx *TxnContext) (*ccrResync, error) {
 	dest := &j.Dest
 	txnId := ctx.TxnId
 	commitInfos := ctx.CommitInfos
 
 	destRpc, err := j.factory.NewFeRpc(dest)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	isTxnInsert := ctx.IsTxnInsert
@@ -795,10 +814,10 @@ func (j *Job) commitTxn(ctx *TxnContext) error {
 		resp, err = destRpc.CommitTransactionForTxnInsert(dest, txnId, true, subTxnInfos)
 	} else {
 		onlyCommitTxn := featureSkipWaitingTxnPublish
-		resp, err = destRpc.CommitTransaction(dest, txnId, commitInfos, onlyCommitTxn)
+		resp, err = destRpc.CommitTransaction(dest, txnId, commitInfos, onlyCommitTxn, ctx.CcrSources...)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Tracef("commit txn %d resp: %v", txnId, resp)
 
@@ -826,7 +845,7 @@ func (j *Job) commitTxn(ctx *TxnContext) error {
 			select {
 			case <-waitCtx.Done():
 				log.Warnf("failpoint: publish_wait_test cancelled for job %s: %v", j.Name, waitCtx.Err())
-				return waitCtx.Err()
+				return nil, waitCtx.Err()
 			case <-time.After(30 * time.Second):
 				log.Infof("failpoint: publish_wait_test wait completed for job %s", j.Name)
 			}
@@ -834,17 +853,18 @@ func (j *Job) commitTxn(ctx *TxnContext) error {
 
 		if err := dest.WaitTransactionDoneWithContext(waitCtx, txnId); err != nil {
 			log.Warnf("wait transaction %d cancelled: %v", txnId, err)
-			return err
+			return nil, err
 		}
 	} else if statusCode != tstatus.TStatusCode_OK {
 		err := xerror.Errorf(xerror.Normal, "commit txn failed, status: %v", resp.Status)
-		return err
+		return nil, err
 	}
 
 	log.Infof("commit txn %d success, commit seq: %d", txnId, ctx.CommitSeq)
 
 	j.applyTxn(ctx)
-	return nil
+	return j.planCcrNotContinuousResync(ctx.CommitSeq, txnId, resp.GetCcrNotContinuousPartitionIds(),
+		ctx.CcrSources, ctx.TableRecords), nil
 }
 
 func (j *Job) applyTxn(ctx *TxnContext) {

@@ -1835,32 +1835,32 @@ func (j *Job) getRelatedTableRecords(upsert *record.Upsert) ([]*record.TableReco
 
 // Table ingestBinlog
 func (j *Job) ingestBinlog(commitSeq, txnId int64, tableRecords []*record.TableRecord, stidMap map[int64]int64) (
-	[]*ttypes.TTabletCommitInfo, []*festruct.TSubTxnInfo, error) {
+	[]*ttypes.TTabletCommitInfo, []*festruct.TSubTxnInfo, []*festruct.TCcrPartitionSource, error) {
 	isTxnInsert := len(stidMap) > 0
 	log.Tracef("txn %d ingest binlog, commitSeq: %d, is txn insert: %t", txnId, commitSeq, isTxnInsert)
 
 	job, err := j.jobFactory.CreateJob(NewIngestContext(commitSeq, txnId, tableRecords, j.progress.TableMapping, stidMap), j, "IngestBinlog")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	ingestBinlogJob, ok := job.(*IngestBinlogJob)
 	if !ok {
-		return nil, nil, xerror.Errorf(xerror.Normal, "invalid job type, job: %+v", job)
+		return nil, nil, nil, xerror.Errorf(xerror.Normal, "invalid job type, job: %+v", job)
 	}
 
 	job.Run()
 	if err := job.Error(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	commitInfos := ingestBinlogJob.CommitInfos()
 	if !isTxnInsert {
-		return commitInfos, nil, nil
+		return commitInfos, nil, ingestBinlogJob.CcrPartitionSources(), nil
 	}
 
 	// When txn insert, use subTxnInfos to commit rather than commitInfos.
 	subTxnInfos := ingestBinlogJob.SubTxnInfos()
-	return commitInfos, subTxnInfos, nil
+	return commitInfos, subTxnInfos, nil, nil
 }
 
 func (j *Job) handleUpsertWithRetry(binlog *festruct.TBinlog) error {
@@ -1885,16 +1885,17 @@ func (j *Job) handleUpsert(binlog *festruct.TBinlog) error {
 
 	// inMemory will be update in state machine, but progress keep any, so progress.inMemory is also latest, well call NextSubCheckpoint don't need to update inMemory in progress
 	type inMemoryData struct {
-		CommitSeq    int64                       `json:"commit_seq"`
-		TxnId        int64                       `json:"txn_id"`
-		DestTableIds []int64                     `json:"dest_table_ids"`
-		TableRecords []*record.TableRecord       `json:"table_records"`
-		CommitInfos  []*ttypes.TTabletCommitInfo `json:"commit_infos"`
-		IsTxnInsert  bool                        `json:"is_txn_insert"`
-		SourceStids  []int64                     `json:"source_stid"`
-		DestStids    []int64                     `json:"desc_stid"`
-		SubTxnInfos  []*festruct.TSubTxnInfo     `json:"sub_txn_infos"`
-		Label        string                      `json:"label"`
+		CommitSeq    int64                           `json:"commit_seq"`
+		TxnId        int64                           `json:"txn_id"`
+		DestTableIds []int64                         `json:"dest_table_ids"`
+		TableRecords []*record.TableRecord           `json:"table_records"`
+		CommitInfos  []*ttypes.TTabletCommitInfo     `json:"commit_infos"`
+		IsTxnInsert  bool                            `json:"is_txn_insert"`
+		SourceStids  []int64                         `json:"source_stid"`
+		DestStids    []int64                         `json:"desc_stid"`
+		SubTxnInfos  []*festruct.TSubTxnInfo         `json:"sub_txn_infos"`
+		Label        string                          `json:"label"`
+		CcrSources   []*festruct.TCcrPartitionSource `json:"ccr_sources,omitempty"`
 	}
 
 	updateInMemory := func() error {
@@ -2093,7 +2094,7 @@ func (j *Job) handleUpsert(binlog *festruct.TBinlog) error {
 		}
 
 		// Step 3: ingest binlog
-		commitInfos, subTxnInfos, err := j.ingestBinlog(commitSeq, txnId, tableRecords, stidMap)
+		commitInfos, subTxnInfos, ccrSources, err := j.ingestBinlog(commitSeq, txnId, tableRecords, stidMap)
 		if err == errTriggerPartialSnapshot {
 			if j.Extra.PartialSnapshotParams == nil {
 				panic("partial snapshot params is nil when trigger partial snapshot")
@@ -2105,6 +2106,7 @@ func (j *Job) handleUpsert(binlog *festruct.TBinlog) error {
 		} else {
 			inMemoryData.CommitInfos = commitInfos
 			inMemoryData.SubTxnInfos = subTxnInfos
+			inMemoryData.CcrSources = ccrSources
 			j.progress.NextSubCheckpoint(CommitTransaction, inMemoryData)
 		}
 
@@ -2131,7 +2133,7 @@ func (j *Job) handleUpsert(binlog *festruct.TBinlog) error {
 			resp, err = destRpc.CommitTransactionForTxnInsert(dest, txnId, true, subTxnInfos)
 		} else {
 			onlyCommitTxn := featureSkipWaitingTxnPublish
-			resp, err = destRpc.CommitTransaction(dest, txnId, commitInfos, onlyCommitTxn)
+			resp, err = destRpc.CommitTransaction(dest, txnId, commitInfos, onlyCommitTxn, inMemoryData.CcrSources...)
 		}
 		if err != nil {
 			rollback(err, inMemoryData)
@@ -2151,6 +2153,12 @@ func (j *Job) handleUpsert(binlog *festruct.TBinlog) error {
 		}
 
 		log.Infof("commit txn %d success", txnId)
+		// persisted with the commit by committed(), and started by handleBinlog. Keep the one persisted before a
+		// restart (the first persist of committed() for a db sync): the commit again after the restart may not tell it.
+		if resync := j.planCcrNotContinuousResync(inMemoryData.CommitSeq, txnId,
+			resp.GetCcrNotContinuousPartitionIds(), inMemoryData.CcrSources, inMemoryData.TableRecords); resync != nil {
+			j.progress.CcrResync = resync
+		}
 		committed()
 		return nil
 
@@ -3318,6 +3326,14 @@ func (j *Job) handleBinlog(binlog *festruct.TBinlog) (error, bool) {
 		return nil, true
 	}
 
+	// Sync again the not continuous partitions of the committed upsert, outside handleUpsertWithRetry: a meta error
+	// of it must not handle the committed upsert again
+	if j.progress.CcrResync != nil {
+		if err := j.startCcrResync(); err != nil {
+			return err, false
+		}
+	}
+
 	// Step 2: check job state, if not incrementalSync, such as DBPartialSync, break
 	if !j.isIncrementalSync() {
 		log.Tracef("job state is not incremental sync, back to run loop, job state: %s", j.progress.SyncState)
@@ -3906,6 +3922,16 @@ func (j *Job) incrementalSyncInternal() error {
 		return nil
 	}
 
+	// A resync persisted with a commit, not started before a restart or a failed tick. After the skip the user
+	// required: a full sync covers the resync, and it is the way out of a resync that cannot be started
+	if j.progress.CcrResync != nil {
+		if err := j.startCcrResync(); err != nil {
+			return err
+		} else if !j.isIncrementalSync() {
+			return nil
+		}
+	}
+
 	// Step 1: get binlog
 	log.Trace("start incremental sync")
 	src := &j.Src
@@ -4165,6 +4191,9 @@ func (j *Job) NewSnapshot(commitSeq int64, fullSyncInfo string) error {
 
 	j.progress.PartialSyncData = nil
 	j.progress.TableAliases = nil
+	// the full sync covers a pending resync of not continuous partitions, e.g. the one handleError makes for a meta
+	// error of startCcrResync
+	j.progress.CcrResync = nil
 	j.progress.SyncId += 1
 	switch j.SyncType {
 	case TableSync:

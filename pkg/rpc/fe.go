@@ -105,7 +105,7 @@ type RestoreSnapshotRequest struct {
 type IFeRpc interface {
 	BeginTransaction(*base.Spec, string, []int64) (*festruct.TBeginTxnResult_, error)
 	BeginTransactionForTxnInsert(*base.Spec, string, []int64, int64) (*festruct.TBeginTxnResult_, error)
-	CommitTransaction(*base.Spec, int64, []*festruct_types.TTabletCommitInfo, bool) (*festruct.TCommitTxnResult_, error)
+	CommitTransaction(*base.Spec, int64, []*festruct_types.TTabletCommitInfo, bool, ...*festruct.TCcrPartitionSource) (*festruct.TCommitTxnResult_, error)
 	CommitTransactionForTxnInsert(*base.Spec, int64, bool, []*festruct.TSubTxnInfo) (*festruct.TCommitTxnResult_, error)
 	RollbackTransaction(spec *base.Spec, txnId int64) (*festruct.TRollbackTxnResult_, error)
 	GetBinlog(*base.Spec, int64, int64) (*festruct.TGetBinlogResult_, error)
@@ -420,10 +420,10 @@ func (rpc *FeRpc) BeginTransactionForTxnInsert(spec *base.Spec, label string, ta
 	return convertResult[festruct.TBeginTxnResult_](result, err)
 }
 
-func (rpc *FeRpc) CommitTransaction(spec *base.Spec, txnId int64, commitInfos []*festruct_types.TTabletCommitInfo, onlyCommit bool) (*festruct.TCommitTxnResult_, error) {
+func (rpc *FeRpc) CommitTransaction(spec *base.Spec, txnId int64, commitInfos []*festruct_types.TTabletCommitInfo, onlyCommit bool, sources ...*festruct.TCcrPartitionSource) (*festruct.TCommitTxnResult_, error) {
 	// return rpc.masterClient.CommitTransaction(spec, txnId, commitInfos)
 	caller := func(client IFeRpc) (resultType, error) {
-		return client.CommitTransaction(spec, txnId, commitInfos, onlyCommit)
+		return client.CommitTransaction(spec, txnId, commitInfos, onlyCommit, sources...)
 	}
 	result, err := rpc.callWithMasterRedirect(caller)
 	return convertResult[festruct.TCommitTxnResult_](result, err)
@@ -632,7 +632,7 @@ func (rpc *singleFeClient) BeginTransactionForTxnInsert(spec *base.Spec, label s
 //	    14: optional list<TSubTxnInfo> sub_txn_infos
 //	    15: optional bool only_commit   // only commit txn, without waiting txn publish
 //	}
-func (rpc *singleFeClient) CommitTransaction(spec *base.Spec, txnId int64, commitInfos []*festruct_types.TTabletCommitInfo, onlyCommit bool) (*festruct.TCommitTxnResult_, error) {
+func (rpc *singleFeClient) CommitTransaction(spec *base.Spec, txnId int64, commitInfos []*festruct_types.TTabletCommitInfo, onlyCommit bool, sources ...*festruct.TCcrPartitionSource) (*festruct.TCommitTxnResult_, error) {
 	log.Tracef("Call CommitTransaction, addr: %s spec: %s, txnId: %d, commitInfos: %v", rpc.Address(), spec, txnId, commitInfos)
 
 	defer xmetrics.RecordFeRpc("CommitTransaction", rpc.addr)()
@@ -643,6 +643,9 @@ func (rpc *singleFeClient) CommitTransaction(spec *base.Spec, txnId int64, commi
 	req.TxnId = &txnId
 	req.CommitInfos = commitInfos
 	req.OnlyCommit = &onlyCommit
+	if len(sources) > 0 {
+		req.CcrPartitionSources = sources
+	}
 
 	if result, err := client.CommitTxn(context.Background(), req, callopt.WithRPCTimeout(commitTxnTimeout)); err != nil {
 		return nil, xerror.Wrapf(err, xerror.RPC, "CommitTransaction error: %v, req: %+v", err, req)
@@ -987,6 +990,10 @@ func (rpc *singleFeClient) LockBinlog(spec *base.Spec, jobUniqueId string, table
 		LockCommitSeq: &lockCommitSeq,
 	}
 	setAuthInfo(req, spec)
+	// a FE that checks the privilege of lock binlog by the table name rejects a request without it ("table is required")
+	if spec.Table != "" {
+		req.Table = &spec.Table
+	}
 
 	if resp, err := client.LockBinlog(context.Background(), req); err != nil {
 		return nil, xerror.Wrapf(err, xerror.RPC, "LockBinlog failed, req: %+v", req)
