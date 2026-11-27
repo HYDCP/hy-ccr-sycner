@@ -2893,7 +2893,18 @@ func (j *Job) handleReplaceTable(binlog *festruct.TBinlog) error {
 		info := fmt.Sprintf("replace table %s with fullsync in table sync, reset src table id from %d to %d, swap: %t",
 			record.OriginTableName, record.OriginTableId, record.NewTableId, record.SwapTable)
 		log.Infof("%s", info)
+		// Persist the new src table id before the full sync starts, otherwise the stored job
+		// info keeps the replaced (dropped) table id until the full sync finishes:
+		//   - get_lag, job_list and the metrics collector read the stored job info, and the
+		//     source FE returns BINLOG_NOT_FOUND_TABLE for the dropped table id;
+		//   - a syncer restart during the full sync reloads the old id, and the id mismatch
+		//     check in GetSnapshotInfo forces another full sync.
+		originTableId := j.Src.TableId
 		j.Src.TableId = record.NewTableId
+		if err := j.persistJob(); err != nil {
+			j.Src.TableId = originTableId
+			return err
+		}
 		return j.NewSnapshot(commitSeq, info)
 	}
 
